@@ -51,6 +51,8 @@ def obter_dados_sms(start_at, end_at):
     st.warning(f"Body enviado para Kolmeya: {body}")
     try:
         resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+        st.warning(f"Status da resposta Kolmeya: {resp.status_code}")
+        st.warning(f"Resposta da API Kolmeya: {resp.text}")
         if resp.status_code == 422:
             st.error(f"Erro de validação na API: {resp.text}")
             return []
