@@ -114,7 +114,7 @@ def obter_dados_ura(start_at, end_at):
         # "ultimosMinutos": None
     }
     try:
-        resp = requests.post(API_URL_URA, headers=headers, json=body, timeout=20)
+        resp = requests.post(API_URL_URA, headers=headers, json=body, timeout=20, verify=False)
         resp.raise_for_status()
         data = resp.json()
         if data.get("codStatus", 0) != 1:
