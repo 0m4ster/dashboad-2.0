@@ -119,7 +119,32 @@ try:
             st.error(f"Erro ao buscar dados da API URA (httpx): {e}")
             return []
 except ImportError:
-    pass
+    import requests
+    def obter_dados_ura(start_at, end_at):
+        token = os.environ.get("ARGUS_TOKEN")
+        if not token:
+            st.error("Token de autenticação não encontrado. Defina a variável de ambiente ARGUS_TOKEN.")
+            return []
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        body = {
+            "idCampanha": 1,
+            "periodoInicial": start_at.strftime('%Y-%m-%dT%H:%M:%S'),
+            "periodoFinal": end_at.strftime('%Y-%m-%dT%H:%M:%S'),
+        }
+        try:
+            resp = requests.post(API_URL_URA, headers=headers, json=body, timeout=20, verify=False)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("codStatus", 0) != 1:
+                st.error(f"Erro na API URA: {data.get('descStatus', 'Erro desconhecido')}")
+                return []
+            return data.get("tabulacoes", [])
+        except Exception as e:
+            st.error(f"Erro ao buscar dados da API URA (requests): {e}")
+            return []
 
 def obter_dados_robo():
     url = "http://192.168.0.245:5000/total?token=meu_token_secreto"
