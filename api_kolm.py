@@ -33,9 +33,14 @@ def obter_dados_sms(start_at, end_at):
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
+    # Garantir que end_at não seja posterior a 2025-07-21 10:03
+    max_date = datetime(2025, 7, 21, 10, 3)
+    if end_at > max_date:
+        end_at = max_date
+    
     body = {
-        "start_at": start_at.strftime('%Y-%m-%dT%H:%M:%S'),  # Formato ISO8601
-        "end_at": end_at.strftime('%Y-%m-%dT%H:%M:%S'),      # Formato ISO8601
+        "start_at": start_at.strftime('%Y-%m-%d %H:%M'),  # Formato Y-m-d H:i
+        "end_at": end_at.strftime('%Y-%m-%d %H:%M'),      # Formato Y-m-d H:i
         "limit": 30000
     }
     try:
