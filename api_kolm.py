@@ -35,36 +35,26 @@ def get_today_range():
 @st.cache_data(ttl=120)
 def obter_dados_sms(start_at, end_at):
     token = os.environ.get("KOLMEYA_TOKEN")
-    st.warning(f"KOLMEYA_TOKEN lido: {token}")
-    st.warning(f"Período buscado: {start_at} até {end_at}")
-    if not token:
-        st.error("Token de autenticação não encontrado. Defina a variável de ambiente KOLMEYA_TOKEN.")
-        return []
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    # Garantir que end_at não seja posterior a 2025-07-21 10:03
-    max_date = datetime(2025, 7, 21, 10, 3)
-    if end_at > max_date:
-        end_at = max_date
-    
+    # Removido: Garantir que end_at não seja posterior a 2025-07-21 10:03
+    # max_date = datetime(2025, 7, 21, 10, 3)
+    # if end_at > max_date:
+    #     end_at = max_date
     body = {
         "start_at": start_at.strftime('%Y-%m-%d %H:%M'),  # Formato Y-m-d H:i
         "end_at": end_at.strftime('%Y-%m-%d %H:%M'),      # Formato Y-m-d H:i
         "limit": 30000
     }
-    st.warning(f"Body enviado para Kolmeya: {body}")
     try:
         resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
-        st.warning(f"Status da resposta Kolmeya: {resp.status_code}")
-        st.warning(f"Resposta da API Kolmeya: {resp.text}")
         if resp.status_code == 422:
             st.error(f"Erro de validação na API: {resp.text}")
             return []
         resp.raise_for_status()
         messages = resp.json().get("messages", [])
-        st.warning(f"Primeira mensagem recebida: {messages[0] if messages else 'Nenhuma mensagem'}")
         return messages
     except Exception as e:
         st.error(f"Erro ao buscar dados da API: {e}")
