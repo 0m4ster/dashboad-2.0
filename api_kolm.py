@@ -34,12 +34,15 @@ def obter_dados_sms(start_at, end_at):
         "Content-Type": "application/json"
     }
     body = {
-        "start_at": start_at.strftime('%Y-%m-%d %H:%M'),
-        "end_at": end_at.strftime('%Y-%m-%d %H:%M'),
+        "start_at": start_at.strftime('%Y-%m-%dT%H:%M:%S'),  # Formato ISO8601
+        "end_at": end_at.strftime('%Y-%m-%dT%H:%M:%S'),      # Formato ISO8601
         "limit": 30000
     }
     try:
         resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+        if resp.status_code == 422:
+            st.error(f"Erro de validação na API: {resp.text}")
+            return []
         resp.raise_for_status()
         return resp.json().get("messages", [])
     except Exception as e:
