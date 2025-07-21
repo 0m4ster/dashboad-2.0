@@ -81,21 +81,31 @@ def obter_producao_facta(telefones):
         resp.raise_for_status()
         data = resp.json()
         propostas = data.get("propostas", [])
-        # Padronize os telefones dos SMS
+        # Extrair todos os telefones das propostas
+        telefones_propostas = set()
+        for p in propostas:
+            for campo in ["FONE", "CELULAR", "FONE2"]:
+                tel = limpar_telefone(p.get(campo, ""))
+                if tel:
+                    telefones_propostas.add(tel)
+        # Padronize os telefones recebidos
         telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
         producao = 0.0
         total_vendas = 0
         for p in propostas:
+            bateu = False
             for campo in ["FONE", "CELULAR", "FONE2"]:
                 tel_proposta = limpar_telefone(p.get(campo, ""))
                 if tel_proposta and tel_proposta in telefones_limpos:
-                    producao += float(p.get("valor_af", 0))
-                    total_vendas += 1
-                    break  # Evita contar a mesma proposta mais de uma vez
-        return producao, total_vendas
+                    bateu = True
+                    break
+            if bateu:
+                producao += float(p.get("valor_af", 0))
+                total_vendas += 1
+        return list(telefones_propostas), total_vendas, producao
     except Exception as e:
         st.error(f"Erro ao buscar dados da Facta: {e}")
-        return 0.0, 0
+        return [], 0, 0.0
 
 API_URL_URA = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
 
@@ -171,7 +181,7 @@ def main():
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
-    producao, total_vendas = obter_producao_facta(telefones)
+    telefones_facta, total_vendas, producao = obter_producao_facta(telefones)
     previsao_faturamento = producao * 1.0
     ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
     roi = previsao_faturamento - investimento
@@ -182,7 +192,7 @@ def main():
     investimento_ura = quantidade_ura * CUSTO_POR_LIGACAO_URA
     # Para URA, usar o campo correto de telefone
     telefones_ura = [m.get("dddTelefone") for m in messages_ura if m.get("dddTelefone")]
-    producao_ura, total_vendas_ura = obter_producao_facta(telefones_ura)
+    producao_ura, total_vendas_ura, _ = obter_producao_facta(telefones_ura)
     previsao_faturamento_ura = producao_ura * 1.0
     ticket_medio_ura = producao_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0
     roi_ura = previsao_faturamento_ura - investimento_ura
