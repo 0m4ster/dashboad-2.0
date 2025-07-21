@@ -29,6 +29,8 @@ def get_week_range():
 @st.cache_data(ttl=120)
 def obter_dados_sms(start_at, end_at):
     token = os.environ.get("KOLMEYA_TOKEN")
+    st.warning(f"KOLMEYA_TOKEN lido: {token}")
+    st.warning(f"Período buscado: {start_at} até {end_at}")
     if not token:
         st.error("Token de autenticação não encontrado. Defina a variável de ambiente KOLMEYA_TOKEN.")
         return []
