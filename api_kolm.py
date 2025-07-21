@@ -26,6 +26,12 @@ def get_week_range():
         end_at = now
     return start_at, end_at
 
+def get_today_range():
+    hoje = datetime.now()
+    start_at = hoje.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_at = hoje.replace(hour=23, minute=59, second=0, microsecond=0)
+    return start_at, end_at
+
 @st.cache_data(ttl=120)
 def obter_dados_sms(start_at, end_at):
     token = os.environ.get("KOLMEYA_TOKEN")
@@ -151,7 +157,7 @@ def main():
     # Removido: Mostra o IP do servidor
     # get_render_ip()
 
-    start_at, end_at = get_week_range()
+    start_at, end_at = get_today_range()
 
     st.markdown(
         """
