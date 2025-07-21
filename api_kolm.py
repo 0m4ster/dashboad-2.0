@@ -48,6 +48,7 @@ def obter_dados_sms(start_at, end_at):
         "end_at": end_at.strftime('%Y-%m-%d %H:%M'),      # Formato Y-m-d H:i
         "limit": 30000
     }
+    st.warning(f"Body enviado para Kolmeya: {body}")
     try:
         resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
         if resp.status_code == 422:
