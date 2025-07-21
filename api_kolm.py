@@ -174,6 +174,7 @@ def main():
     )
 
     # --- PAINEL KOLMEYA ---
+    start_at, end_at = get_today_range()
     messages = obter_dados_sms(start_at, end_at)
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
