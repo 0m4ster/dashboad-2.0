@@ -54,7 +54,9 @@ def obter_dados_sms(start_at, end_at):
             st.error(f"Erro de validação na API: {resp.text}")
             return []
         resp.raise_for_status()
-        return resp.json().get("messages", [])
+        messages = resp.json().get("messages", [])
+        st.warning(f"Primeira mensagem recebida: {messages[0] if messages else 'Nenhuma mensagem'}")
+        return messages
     except Exception as e:
         st.error(f"Erro ao buscar dados da API: {e}")
         return []
