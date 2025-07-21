@@ -116,20 +116,13 @@ def obter_dados_robo():
         st.error(f"Erro ao buscar dados do robô: {e}")
         return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
 
-def get_render_ip():
-    try:
-        ip = requests.get('https://api.ipify.org').text
-        st.write(f"IP do servidor Render: {ip}")
-    except:
-        st.error("Não foi possível obter o IP")
-
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")  # Atualiza a cada 2 minutos
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
-    # Mostra o IP do servidor
-    get_render_ip()
+    # Removido: Mostra o IP do servidor
+    # get_render_ip()
 
     start_at, end_at = get_week_range()
 
