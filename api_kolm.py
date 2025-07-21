@@ -89,7 +89,7 @@ def obter_producao_facta(telefones):
         st.error(f"Erro ao buscar dados da Facta: {e}")
         return 0.0, 0
 
-API_URL_URA = "https://argus.app.br/apiargus/report/ligacoesdetalhadas"
+API_URL_URA = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
 
 @st.cache_data(ttl=120)
 def obter_dados_ura(start_at, end_at):
@@ -103,28 +103,42 @@ def obter_dados_ura(start_at, end_at):
     }
     body = {
         "idCampanha": 1,
+        # Os campos opcionais podem ser adicionados conforme necessidade:
+        # "idTabulacao": None,
+        # "idGrupoUsuario": None,
+        # "idUsuario": None,
+        # "idLote": None,
+        # "exibirUltTabulacao": True,
         "periodoInicial": start_at.strftime('%Y-%m-%dT%H:%M:%S'),
-        "periodoFinal": end_at.strftime('%Y-%m-%dT%H:%M:%S')
+        "periodoFinal": end_at.strftime('%Y-%m-%dT%H:%M:%S'),
+        # "ultimosMinutos": None
     }
     try:
         resp = requests.post(API_URL_URA, headers=headers, json=body, timeout=20)
         resp.raise_for_status()
-        return resp.json().get("ligacoesDetalhadas", [])
+        data = resp.json()
+        if data.get("codStatus", 0) != 1:
+            st.error(f"Erro na API URA: {data.get('descStatus', 'Erro desconhecido')}")
+            return []
+        return data.get("tabulacoes", [])
     except Exception as e:
         st.error(f"Erro ao buscar dados da API URA: {e}")
         return []
 
 def obter_dados_robo():
-    url = "https://mr-robot-fl0t.onrender.com/total?token=meu_token_secreto"
+    url = "http://192.168.0.245:5000/total?token=meu_token_secreto"
     try:
-        resp = requests.get(url, timeout=10)  # Aumentei o timeout para 10 segundos por ser uma chamada externa
-        if resp.status_code == 401:
-            st.error("Erro de autenticação no robô. Verifique o token.")
-            return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
+        resp = requests.get(url, timeout=5)  # Reduzindo o timeout para 5 segundos
         resp.raise_for_status()
         return resp.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao buscar dados do robô: {str(e)}")
+    except requests.exceptions.ConnectTimeout:
+        st.warning("⚠️ Robô não está acessível no momento (timeout)")
+        return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
+    except requests.exceptions.ConnectionError:
+        st.warning("⚠️ Não foi possível conectar ao robô (erro de conexão)")
+        return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
+    except Exception as e:
+        st.error(f"⚠️ Erro ao buscar dados do robô: {str(e)}")
         return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
 
 def main():
