@@ -115,13 +115,16 @@ def obter_dados_ura(start_at, end_at):
         return []
 
 def obter_dados_robo():
-    url = "http://192.168.0.245:5000/total?token=meu_token_secreto"
+    url = "https://mr-robot-fl0t.onrender.com/total?token=meu_token_secreto"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=10)  # Aumentei o timeout para 10 segundos por ser uma chamada externa
+        if resp.status_code == 401:
+            st.error("Erro de autenticação no robô. Verifique o token.")
+            return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
         resp.raise_for_status()
         return resp.json()
-    except Exception as e:
-        st.error(f"Erro ao buscar dados do robô: {e}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro ao buscar dados do robô: {str(e)}")
         return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
 
 def main():
