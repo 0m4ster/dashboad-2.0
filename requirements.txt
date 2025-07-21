@@ -1,4 +1,5 @@
 streamlit
 requests
+httpx
 pandas
-streamlit-autorefresh 
+# Adicione outros pacotes necessários aqui 
