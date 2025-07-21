@@ -29,7 +29,9 @@ def get_week_range():
 def get_today_range():
     hoje = datetime.now()
     start_at = hoje.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_at = hoje.replace(hour=23, minute=59, second=0, microsecond=0)
+    now = datetime.now()
+    end_of_day = hoje.replace(hour=23, minute=59, second=0, microsecond=0)
+    end_at = min(end_of_day, now)
     return start_at, end_at
 
 @st.cache_data(ttl=120)
