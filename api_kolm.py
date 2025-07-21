@@ -167,11 +167,10 @@ def main():
 
     # --- PAINEL KOLMEYA ---
     messages = obter_dados_sms(start_at, end_at)
-    messages_fgts = [m for m in messages if str(m.get("centro_custo", "")).lower() == "fgts"]
-    quantidade_sms = len(messages_fgts)
+    quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
-    telefones_fgts = [m.get("telefone") for m in messages_fgts if m.get("telefone")]
-    producao, total_vendas = obter_producao_facta(telefones_fgts)
+    telefones = [m.get("telefone") for m in messages if m.get("telefone")]
+    producao, total_vendas = obter_producao_facta(telefones)
     previsao_faturamento = producao * 1.0
     ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
     roi = previsao_faturamento - investimento
