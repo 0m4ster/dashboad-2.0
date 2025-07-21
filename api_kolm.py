@@ -6,6 +6,8 @@ import re
 import pandas as pd  # Adiciona pandas para compatibilidade com exemplo
 from streamlit_autorefresh import st_autorefresh
 import httpx  # Adicionado para garantir uso do httpx
+import ssl
+print("OpenSSL version:", ssl.OPENSSL_VERSION)
 
 API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
