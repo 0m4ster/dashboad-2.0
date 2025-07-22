@@ -371,13 +371,18 @@ def main():
         ', '.join(sorted(telefones_batidos)) if telefones_batidos else 'Nenhum'
     ), unsafe_allow_html=True)
 
-    # Exemplo de uso:
-    # datas_kolmeya = set(m.get('data_envio') for m in messages if m.get('data_envio'))
-    # centro_custo_kolmeya = set(m.get('centro_custo') for m in messages if m.get('centro_custo'))
-    # params = {"convenio": 3, "quantidade": 5000}  # Adapte conforme necessário
-    # propostas_facta = obter_andamento_propostas_facta(params)
-    # propostas_batidas = [p for p in propostas_facta if p.get('data_movimento') in datas_kolmeya and p.get('centro_custo') in centro_custo_kolmeya]
-    # st.markdown(f"<b>Propostas batidas Facta:</b> {propostas_batidas}", unsafe_allow_html=True)
+    # Comparação de datas e centro de custo Kolmeya x Facta (andamento-propostas)
+    datas_kolmeya = set(m.get('data_envio') for m in messages if m.get('data_envio'))
+    centro_custo_kolmeya = set(m.get('centro_custo') for m in messages if m.get('centro_custo'))
+    params = {"convenio": 3, "quantidade": 5000}
+    propostas_facta = obter_andamento_propostas_facta(params)
+    propostas_batidas = [p for p in propostas_facta if p.get('data_movimento') in datas_kolmeya and p.get('centro_custo') in centro_custo_kolmeya]
+    st.markdown(f"""
+    <div style='background: #1a2a1a; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+        <b>Propostas batidas Kolmeya x Facta (por data e centro de custo):</b><br>
+        <span style='font-size: 0.95em; color: #e0d7f7;'>Quantidade: {len(propostas_batidas)}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # --- PAINEL URA ---
     messages_ura = obter_dados_ura(start_at, end_at)
