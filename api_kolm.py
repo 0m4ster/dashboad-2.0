@@ -90,6 +90,7 @@ def formatar_real(valor):
 def obter_propostas_facta_semana_atual(phpsessid=None):
     """
     Busca propostas FGTS no endpoint andamento-propostas da Facta da semana atual (segunda-feira até hoje), com paginação automática.
+    Adiciona logs para depuração.
     """
     from datetime import datetime, timedelta
     facta_token = os.environ.get('FACTA_TOKEN', '')
@@ -110,14 +111,19 @@ def obter_propostas_facta_semana_atual(phpsessid=None):
     data_fim = hoje.strftime('%d/%m/%Y')
     while True:
         params = {"quantidade": 5000, "pagina": pagina, "data_ini": data_ini, "data_fim": data_fim}
+        st.write("Parâmetros usados na requisição Facta:", params)
         try:
             resp = requests.get(url, headers=headers, cookies=cookies, params=params, timeout=20)
+            st.write(f"Status code página {pagina}:", resp.status_code)
+            st.write(f"Resposta bruta página {pagina}:", resp.text)
             if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
                 st.warning(f"Erro ao buscar propostas Facta na página {pagina}.")
                 break
             data = resp.json()
             propostas = data.get("propostas", [])
+            st.write(f"Propostas retornadas página {pagina}:", propostas)
             propostas_fgts = [p for p in propostas if p.get("averbador", "").strip().upper() == "FGTS"]
+            st.write(f"Propostas FGTS página {pagina}:", propostas_fgts)
             propostas_filtradas.extend(propostas_fgts)
             if len(propostas) < 5000:
                 break
@@ -209,10 +215,13 @@ def main():
     """, unsafe_allow_html=True)
 
     propostas_fgts = obter_propostas_facta_semana_atual()
+    producao_facta = sum(float(p.get("valor_af", 0)) for p in propostas_fgts if p.get("valor_af") is not None)
     st.markdown(f"""
 <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
     <b>Quantidade de clientes FGTS (Facta):</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_fgts)}</span>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_fgts)}</span><br>
+    <b>Produção Facta (valor_af):</b>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{formatar_real(producao_facta)}</span>
 </div>
 """, unsafe_allow_html=True)
 
