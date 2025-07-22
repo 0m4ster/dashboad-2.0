@@ -52,8 +52,8 @@ def obter_dados_sms():
     max_end_at = datetime(2025, 7, 22, 16, 2)
     if agora > max_end_at:
         agora = max_end_at
-    ontem = agora - timedelta(days=1)
-    start_at = ontem.replace(second=0, microsecond=0)
+    sete_dias_atras = agora - timedelta(days=7)
+    start_at = sete_dias_atras.replace(second=0, microsecond=0)
     end_at = agora.replace(second=0, microsecond=0)
     all_messages = []
     body = {
