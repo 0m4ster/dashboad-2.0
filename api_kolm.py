@@ -87,11 +87,11 @@ def limpar_telefone(telefone):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
-def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
+def obter_propostas_facta_ultimos_7_dias(phpsessid=None):
     """
-    Busca propostas no endpoint andamento-propostas da Facta e filtra pela data_movimento (formato DD/MM/AAAA).
-    Retorna a lista de propostas filtradas apenas com averbador FGTS, com paginação automática.
+    Busca propostas FGTS no endpoint andamento-propostas da Facta dos últimos 7 dias, com paginação automática.
     """
+    from datetime import datetime, timedelta
     facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
         phpsessid = os.environ.get('FACTA_PHPSESSID', None)
@@ -104,8 +104,11 @@ def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
     cookies = {"PHPSESSID": phpsessid} if phpsessid else None
     propostas_filtradas = []
     pagina = 1
+    hoje = datetime.now()
+    data_ini = (hoje - timedelta(days=7)).strftime('%d/%m/%Y')
+    data_fim = hoje.strftime('%d/%m/%Y')
     while True:
-        params = {"quantidade": 5000, "pagina": pagina}
+        params = {"quantidade": 5000, "pagina": pagina, "data_ini": data_ini, "data_fim": data_fim}
         try:
             resp = requests.get(url, headers=headers, cookies=cookies, params=params, timeout=20)
             if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
@@ -113,11 +116,7 @@ def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
                 break
             data = resp.json()
             propostas = data.get("propostas", [])
-            # Filtrar pela data_movimento se fornecida e apenas FGTS
-            propostas_fgts = [
-                p for p in propostas
-                if (data_movimento is None or p.get("data_movimento") == data_movimento) and p.get("averbador") == "FGTS"
-            ]
+            propostas_fgts = [p for p in propostas if p.get("averbador") == "FGTS"]
             propostas_filtradas.extend(propostas_fgts)
             if len(propostas) < 5000:
                 break
@@ -175,7 +174,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    propostas_fgts = obter_propostas_facta_por_data(None)
+    propostas_fgts = obter_propostas_facta_ultimos_7_dias()
     st.markdown(f"""
 <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
     <b>Quantidade de clientes FGTS (Facta):</b>
