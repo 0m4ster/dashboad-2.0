@@ -114,7 +114,7 @@ def limpar_telefone(telefone):
 def obter_producao_facta(telefones):
     import urllib.parse
     from datetime import datetime, timedelta
-    url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+    url = "https://webservice.facta.com.br/proposta/consulta-cliente"
     facta_token = os.environ.get('FACTA_TOKEN', '')
     headers = {
         "Authorization": f"Bearer {facta_token}"
