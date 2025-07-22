@@ -216,7 +216,7 @@ def obter_dados_ura(start_at, end_at):
         return []
 
 def obter_dados_robo():
-    url = "https://mr-robot-fl0t.onrender.com/total?token=meu_token_secreto"
+    url = "https://mr-robot-flot.onrender.com/api/total?token=12345"
     try:
         resp = requests.get(url, timeout=5)  # Reduzindo o timeout para 5 segundos
         resp.raise_for_status()
