@@ -47,58 +47,30 @@ def obter_dados_sms():
         "Content-Type": "application/json"
     }
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
-    hoje = datetime.now()
-    max_end_at = datetime(2025, 7, 22, 10, 24)
-    if hoje > max_end_at:
-        hoje = max_end_at
-    start_of_week = hoje - timedelta(days=hoje.weekday())
-    start_at = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_at = hoje
+    agora = datetime.now()
+    ontem = agora - timedelta(days=1)
+    start_at = ontem.replace(second=0, microsecond=0)
+    end_at = agora.replace(second=0, microsecond=0)
     all_messages = []
-    periodo_max = timedelta(days=7)
-    atual = start_at
-    while atual < end_at:
-        proximo = min(atual + periodo_max, end_at)
-        body = {
-            "start_at": atual.strftime('%Y-%m-%d %H:%M'),
-            "end_at": proximo.strftime('%Y-%m-%d %H:%M'),
-            "limit": 30000
-        }
-        try:
-            resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
-            if resp.status_code == 422:
-                try:
-                    st.error(f"Erro 422 na API Kolmeya: {resp.text}")
-                except Exception:
-                    st.error("Erro 422 na API Kolmeya (não foi possível exibir o texto da resposta)")
-                return []
-            resp.raise_for_status()
-            messages = resp.json().get("messages", [])
-            all_messages.extend(messages)
-            if len(messages) == 30000:
-                dia = atual
-                while dia < proximo:
-                    dia_fim = min(dia + timedelta(days=1), proximo)
-                    body_dia = {
-                        "start_at": dia.strftime('%Y-%m-%d %H:%M'),
-                        "end_at": dia_fim.strftime('%Y-%m-%d %H:%M'),
-                        "limit": 30000
-                    }
-                    resp_dia = requests.post(API_URL, headers=headers, json=body_dia, timeout=20)
-                    if resp_dia.status_code == 422:
-                        try:
-                            st.error(f"Erro 422 na API Kolmeya (dia): {resp_dia.text}")
-                        except Exception:
-                            st.error("Erro 422 na API Kolmeya (dia) (não foi possível exibir o texto da resposta)")
-                        return []
-                    resp_dia.raise_for_status()
-                    messages_dia = resp_dia.json().get("messages", [])
-                    all_messages.extend(messages_dia)
-                    dia = dia_fim
-        except Exception as e:
-            st.error(f"Erro ao buscar dados da API: {e}")
+    body = {
+        "start_at": start_at.strftime('%Y-%m-%d %H:%M'),
+        "end_at": end_at.strftime('%Y-%m-%d %H:%M'),
+        "limit": 30000
+    }
+    try:
+        resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+        if resp.status_code == 422:
+            try:
+                st.error(f"Erro 422 na API Kolmeya: {resp.text}")
+            except Exception:
+                st.error("Erro 422 na API Kolmeya (não foi possível exibir o texto da resposta)")
             return []
-        atual = proximo
+        resp.raise_for_status()
+        messages = resp.json().get("messages", [])
+        all_messages.extend(messages)
+    except Exception as e:
+        st.error(f"Erro ao buscar dados da API: {e}")
+        return []
     return all_messages
 
 def limpar_telefone(telefone):
@@ -114,7 +86,7 @@ def formatar_real(valor):
 def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
     """
     Busca propostas no endpoint andamento-propostas da Facta e filtra pela data_movimento (formato DD/MM/AAAA).
-    Retorna a lista de propostas filtradas apenas com averbador FGTS.
+    Retorna a lista de propostas filtradas apenas com averbador FGTS, com paginação automática.
     """
     facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
@@ -126,23 +98,30 @@ def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
         "Accept": "application/json"
     }
     cookies = {"PHPSESSID": phpsessid} if phpsessid else None
-    params = {"quantidade": 5000}
-    try:
-        resp = requests.get(url, headers=headers, cookies=cookies, params=params, timeout=20)
-        if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
-            st.warning("Erro ao buscar propostas Facta.")
-            return []
-        data = resp.json()
-        propostas = data.get("propostas", [])
-        # Filtrar pela data_movimento se fornecida e apenas FGTS
-        propostas_filtradas = [
-            p for p in propostas
-            if (data_movimento is None or p.get("data_movimento") == data_movimento) and p.get("averbador") == "FGTS"
-        ]
-        return propostas_filtradas
-    except Exception as e:
-        st.warning(f"Erro ao consultar andamento-propostas Facta: {e}")
-        return []
+    propostas_filtradas = []
+    pagina = 1
+    while True:
+        params = {"quantidade": 5000, "pagina": pagina}
+        try:
+            resp = requests.get(url, headers=headers, cookies=cookies, params=params, timeout=20)
+            if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
+                st.warning(f"Erro ao buscar propostas Facta na página {pagina}.")
+                break
+            data = resp.json()
+            propostas = data.get("propostas", [])
+            # Filtrar pela data_movimento se fornecida e apenas FGTS
+            propostas_fgts = [
+                p for p in propostas
+                if (data_movimento is None or p.get("data_movimento") == data_movimento) and p.get("averbador") == "FGTS"
+            ]
+            propostas_filtradas.extend(propostas_fgts)
+            if len(propostas) < 5000:
+                break
+            pagina += 1
+        except Exception as e:
+            st.warning(f"Erro ao consultar andamento-propostas Facta (página {pagina}): {e}")
+            break
+    return propostas_filtradas
 
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
