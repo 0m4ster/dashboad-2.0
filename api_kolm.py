@@ -156,7 +156,7 @@ def main():
     cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
     telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
     # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção
-    producao = sum(float(m.get("valor_af", 0)) for m in messages if m.get("valor_af") is not None)
+    producao = sum(float(m.get("valor_af", 0)) for m in messages if m.get("averbador") == "FGTS" and m.get("valor_af") is not None)
     total_vendas = sum(1 for m in messages if m.get("averbador") == "FGTS")
     previsao_faturamento = 0.0
     ticket_medio = 0.0
