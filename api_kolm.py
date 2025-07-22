@@ -189,29 +189,31 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Coletar todas as datas de envio do Kolmeya (formato DD/MM/AAAA ou DD/MM/AAAA HH:MM)
+    # Coletar todas as datas (apenas a parte da data) do Kolmeya
     datas_kolmeya = set()
     centros_custo_kolmeya = set()
     for m in messages:
         enviada_em = m.get("enviada_em")
         if enviada_em:
-            datas_kolmeya.add(enviada_em[:10])  # Só a data, sem hora
+            datas_kolmeya.add(enviada_em[:10])  # Pega só 'dd/mm/yyyy'
         centro_custo = m.get("centro_custo")
         if centro_custo:
             centros_custo_kolmeya.add(centro_custo)
 
     # Buscar todas as propostas da Facta (até 5000)
     propostas_facta = obter_propostas_facta_por_data(None)  # None para buscar todas
-    # Filtrar propostas cujo averbador está em centros_custo_kolmeya e data_movimento presente nas datas do Kolmeya
-    propostas_fgts_batidas = [
+    # Filtrar propostas da Facta cujo averbador está em centros_custo_kolmeya e data_movimento presente nas datas do Kolmeya
+    propostas_batidas = [
         p for p in propostas_facta
         if p.get("averbador") in centros_custo_kolmeya and p.get("data_movimento") in datas_kolmeya
     ]
+    datas_batidas = set(p.get("data_movimento") for p in propostas_batidas)
 
     st.markdown(f"""
 <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
     <b>Quantidade de propostas (Facta) com averbador presente como centro de custo no Kolmeya e datas batidas:</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_fgts_batidas)}</span>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_batidas)}</span><br>
+    <span style='font-size: 0.95em; color: #e0d7f7;'>Datas batidas: {', '.join(sorted(datas_batidas)) if datas_batidas else 'Nenhuma'}</span>
 </div>
 """, unsafe_allow_html=True)
 
