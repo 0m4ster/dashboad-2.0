@@ -133,9 +133,22 @@ def obter_producao_facta(telefones):
         resp.raise_for_status()
         data = resp.json()
         propostas = data.get("propostas", [])
-        # Normalizar todos os telefones do Kolmeya
+        st.write("Telefones enviados para Facta:", telefones)
+        st.write("Quantidade de propostas retornadas pela Facta:", len(propostas))
         telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
         telefones_batidos = set()
+        for p in propostas:
+            telefones_proposta = [
+                limpar_telefone(p.get("FONE", "")),
+                limpar_telefone(p.get("CELULAR", "")),
+                limpar_telefone(p.get("FONE2", ""))
+            ]
+            st.write(f"Proposta {p.get('codigo_af', '')} - Telefones: {telefones_proposta}")
+            for tel in telefones_proposta:
+                if tel and tel in telefones_limpos:
+                    telefones_batidos.add(tel)
+                    break
+        st.write("Telefones batidos encontrados:", telefones_batidos)
         producao = 0.0
         for p in propostas:
             telefones_proposta = [
@@ -143,14 +156,11 @@ def obter_producao_facta(telefones):
                 limpar_telefone(p.get("CELULAR", "")),
                 limpar_telefone(p.get("FONE2", ""))
             ]
-            for tel in telefones_proposta:
-                if tel and tel in telefones_limpos:
-                    telefones_batidos.add(tel)
-                    try:
-                        producao += float(p.get("valor_af", 0))
-                    except Exception:
-                        pass
-                    break
+            if any(tel and tel in telefones_batidos for tel in telefones_proposta):
+                try:
+                    producao += float(p.get("valor_af", 0))
+                except Exception:
+                    pass
         return list(telefones_batidos), len(telefones_batidos), producao
     except Exception as e:
         st.error(f"Erro ao buscar dados da Facta: {e}")
@@ -206,6 +216,11 @@ def obter_dados_robo():
         st.error(f"⚠️ Erro ao buscar dados do robô: {str(e)}")
         return {"cpfs_enriquecidos": 0, "cpfs_faturados": 0, "valor": 0.0}
 
+# Função utilitária para formatar valores em Real
+
+def formatar_real(valor):
+    return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
@@ -237,8 +252,6 @@ def main():
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
-    # Adiciona telefone de teste manualmente
-    telefones.append("11992033264")
     telefones_facta, total_vendas, producao = obter_producao_facta(telefones)
     previsao_faturamento = float(producao) * 1.0
     ticket_medio = float(producao) / total_vendas if total_vendas > 0 else 0.0
@@ -317,31 +330,31 @@ def main():
                 </div>
                 <div style='text-align: center;'>
                     <div style='font-size: 1.1em; color: #e0d7f7;'>Custo por envio</div>
-                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>R$ {CUSTO_POR_ENVIO:.2f}</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_ENVIO)}</div>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
-            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>R$ {investimento:,.2f}</div>
+            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
             <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Total de vendas</b></span>
-                    <span style='color: #fff;'>{', '.join(map(str, telefones_facta)) if telefones_facta else '0'}</span>
+                     <span style='color: #fff;'>{', '.join(map(str, telefones_facta)) if telefones_facta else '0'}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Produção</b></span>
-                    <span style='color: #fff;'>R$ {producao:,.2f}</span>
+                    <span style='color: #fff;'>{formatar_real(producao)}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Previsão de faturamento</b></span>
-                    <span style='color: #fff;'>R$ {previsao_faturamento:,.2f}</span>
+                    <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center;'>
                     <span style='color: #fff;'><b>Ticket médio</b></span>
-                    <span style='color: #fff;'>R$ {ticket_medio:,.2f}</span>
+                    <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
-            <div style='font-size: 2em; font-weight: bold; color: #fff;'>R$ {roi:,.2f}</div>
+            <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(roi)}</div>
         </div>
         """
         st.markdown(painel_kolmeya_html, unsafe_allow_html=True)
@@ -357,11 +370,11 @@ def main():
                 </div>
                 <div style='text-align: center;'>
                     <div style='font-size: 1.1em; color: #e0d7f7;'>Custo</div>
-                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>R$ {CUSTO_POR_LIGACAO_URA:.2f}</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_LIGACAO_URA)}</div>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
-            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>R$ {investimento_ura:,.2f}</div>
+            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento_ura)}</div>
             <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Total de vendas</b></span>
@@ -369,19 +382,19 @@ def main():
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Produção</b></span>
-                    <span style='color: #fff;'>R$ {producao_ura:,.2f}</span>
+                    <span style='color: #fff;'>{formatar_real(producao_ura)}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Previsão de faturamento</b></span>
-                    <span style='color: #fff;'>R$ {previsao_faturamento_ura:,.2f}</span>
+                    <span style='color: #fff;'>{formatar_real(previsao_faturamento_ura)}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center;'>
                     <span style='color: #fff;'><b>Ticket médio</b></span>
-                    <span style='color: #fff;'>R$ {ticket_medio_ura:,.2f}</span>
+                    <span style='color: #fff;'>{formatar_real(ticket_medio_ura)}</span>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
-            <div style='font-size: 2em; font-weight: bold; color: #fff;'>R$ {roi_ura:,.2f}</div>
+            <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(roi_ura)}</div>
         </div>
         """
         st.markdown(painel_ura_html, unsafe_allow_html=True)
