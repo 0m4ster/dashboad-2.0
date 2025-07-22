@@ -178,33 +178,42 @@ def obter_producao_facta(telefones):
                 pass
     return list(telefones_batidos), len(telefones_batidos), producao
 
-def obter_telefones_facta_por_cpf(cpfs):
+def obter_telefones_facta_por_cpf(cpfs, ambiente="producao"):
     """Busca todos os telefones (FONE, CELULAR, FONE2, FONERECADO) de cada CPF na Facta e retorna o set de telefones encontrados."""
     import requests
     import os
     import re
     facta_token = os.environ.get('FACTA_TOKEN', '')
+    if ambiente == "homologacao":
+        url_base = "https://webservice-homol.facta.com.br/proposta/consulta-cliente?cpf="
+    else:
+        url_base = "https://webservice.facta.com.br/proposta/consulta-cliente?cpf="
     headers = {
         "Authorization": f"Bearer {facta_token}"
     }
-    url_base = "https://webservice.facta.com.br/proposta/consulta-cliente?cpf="
     telefones_facta = set()
     for cpf in cpfs:
         url = f"{url_base}{cpf}"
         try:
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
+                st.warning(f"Facta: resposta {resp.status_code} para CPF {cpf}")
                 continue
             if 'application/json' not in resp.headers.get('Content-Type', ''):
+                st.warning(f"Facta: resposta não JSON para CPF {cpf}")
                 continue
             data = resp.json()
+            if data.get("erro") is True:
+                st.warning(f"Facta: erro True para CPF {cpf}")
+                continue
             clientes = data.get("cliente", [])
             for c in clientes:
                 for campo in ["FONE", "CELULAR", "FONE2", "FONERECADO"]:
                     tel = re.sub(r"\D", "", str(c.get(campo, "")))
                     if tel:
                         telefones_facta.add(tel)
-        except Exception:
+        except Exception as e:
+            st.warning(f"Erro ao consultar Facta para CPF {cpf}: {e}")
             continue
     return telefones_facta
 
@@ -305,6 +314,25 @@ def main():
     previsao_faturamento = float(producao) * 1.0
     ticket_medio = float(producao) / total_vendas if total_vendas > 0 else 0.0
     roi = previsao_faturamento - investimento
+
+    # Exibir dados da Facta no painel Kolmeya
+    st.markdown("""
+    <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+        <b>Telefones vindos da Facta:</b><br>
+        <span style='font-size: 0.95em; color: #e0d7f7;'>Quantidade: {}</span><br>
+        <span style='font-size: 0.95em; color: #e0d7f7;'>{}</span>
+    </div>
+    <div style='background: #1a1a2a; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+        <b>Telefones batidos (Kolmeya ∩ Facta):</b><br>
+        <span style='font-size: 0.95em; color: #e0d7f7;'>Quantidade: {}</span><br>
+        <span style='font-size: 0.95em; color: #e0d7f7;'>{}</span>
+    </div>
+    """.format(
+        len(telefones_facta),
+        ', '.join(sorted(telefones_facta)) if telefones_facta else 'Nenhum',
+        len(telefones_batidos),
+        ', '.join(sorted(telefones_batidos)) if telefones_batidos else 'Nenhum'
+    ), unsafe_allow_html=True)
 
     # --- PAINEL URA ---
     messages_ura = obter_dados_ura(start_at, end_at)
