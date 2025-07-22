@@ -71,38 +71,47 @@ def limpar_telefone(telefone):
 
 @st.cache_data(ttl=120)
 def obter_producao_facta(telefones):
+    import urllib.parse
+    from datetime import datetime, timedelta
     url = "https://webservice.facta.com.br/proposta/andamento-propostas"
     facta_token = os.environ.get('FACTA_TOKEN', '')
     headers = {
         "Authorization": f"Bearer {facta_token}"
     }
+    # Buscar dos últimos 30 dias
+    data_fim = datetime.now()
+    data_ini = data_fim - timedelta(days=30)
+    params = {
+        "data_ini": data_ini.strftime('%d/%m/%Y'),
+        "data_fim": data_fim.strftime('%d/%m/%Y'),
+        "quantidade": 5000
+    }
+    url_with_params = url + "?" + urllib.parse.urlencode(params)
     try:
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = requests.get(url_with_params, headers=headers, timeout=20)
         resp.raise_for_status()
         data = resp.json()
         propostas = data.get("propostas", [])
-        # Extrair todos os telefones das propostas
-        telefones_propostas = set()
-        for p in propostas:
-            for campo in ["FONE", "CELULAR", "FONE2"]:
-                tel = limpar_telefone(p.get(campo, ""))
-                if tel:
-                    telefones_propostas.add(tel)
-        # Padronize os telefones recebidos
+        # Normalizar todos os telefones do Kolmeya
         telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
-        producao = 0.0
+        st.write("Telefones Kolmeya normalizados:", telefones_limpos)
         total_vendas = 0
+        producao = 0.0
         for p in propostas:
-            bateu = False
-            for campo in ["FONE", "CELULAR", "FONE2"]:
-                tel_proposta = limpar_telefone(p.get(campo, ""))
-                if tel_proposta and tel_proposta in telefones_limpos:
-                    bateu = True
-                    break
-            if bateu:
-                producao += float(p.get("valor_af", 0))
+            telefones_proposta = [
+                limpar_telefone(p.get("FONE", "")),
+                limpar_telefone(p.get("CELULAR", "")),
+                limpar_telefone(p.get("FONE2", ""))
+            ]
+            st.write(f"Proposta {p.get('codigo_af', '')} - Telefones:", telefones_proposta)
+            if any(tel and tel in telefones_limpos for tel in telefones_proposta):
                 total_vendas += 1
-        return list(telefones_propostas), total_vendas, producao
+                try:
+                    producao += float(p.get("valor_af", 0))
+                except Exception:
+                    pass
+        st.write(f"Total de vendas encontradas: {total_vendas}")
+        return [], total_vendas, producao
     except Exception as e:
         st.error(f"Erro ao buscar dados da Facta: {e}")
         return [], 0, 0.0
