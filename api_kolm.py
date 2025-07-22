@@ -179,9 +179,10 @@ def obter_producao_facta(telefones):
     return list(telefones_batidos), len(telefones_batidos), producao
 
 def obter_telefones_facta_por_cpf(cpfs):
-    """Busca todos os telefones (FONE, CELULAR, FONE2, FONERECADO) de cada CPF na Facta."""
+    """Busca todos os telefones (FONE, CELULAR, FONE2, FONERECADO) de cada CPF na Facta e retorna o set de telefones encontrados."""
     import requests
     import os
+    import re
     facta_token = os.environ.get('FACTA_TOKEN', '')
     headers = {
         "Authorization": f"Bearer {facta_token}"
@@ -192,11 +193,15 @@ def obter_telefones_facta_por_cpf(cpfs):
         url = f"{url_base}{cpf}"
         try:
             resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                continue
+            if 'application/json' not in resp.headers.get('Content-Type', ''):
+                continue
             data = resp.json()
             clientes = data.get("cliente", [])
             for c in clientes:
                 for campo in ["FONE", "CELULAR", "FONE2", "FONERECADO"]:
-                    tel = limpar_telefone(c.get(campo, ""))
+                    tel = re.sub(r"\D", "", str(c.get(campo, "")))
                     if tel:
                         telefones_facta.add(tel)
         except Exception:
