@@ -1,5 +1,6 @@
 import requests
 import base64
+import time
 
 # Substitua pelos seus dados fornecidos pela Facta
 usuario = "97832"
@@ -15,16 +16,19 @@ headers = {
 
 url = "https://webservice.facta.com.br/gera-token"
 
-resp = requests.get(url, headers=headers)
-try:
-    data = resp.json()
-    print("Status code:", resp.status_code)
-    print("Resposta:", data)
-    if not data.get("erro") and "token" in data:
-        print("\nToken gerado com sucesso:")
-        print(data["token"])
-    else:
-        print("\nNão foi possível gerar o token. Mensagem:", data.get("mensagem"))
-except Exception as e:
-    print("Erro ao decodificar resposta:", e)
-    print("Resposta bruta:", resp.text) 
+while True:
+    resp = requests.get(url, headers=headers)
+    try:
+        data = resp.json()
+        print("Status code:", resp.status_code)
+        print("Resposta:", data)
+        if not data.get("erro") and "token" in data:
+            print("\nToken gerado com sucesso:")
+            print(data["token"])
+        else:
+            print("\nNão foi possível gerar o token. Mensagem:", data.get("mensagem"))
+    except Exception as e:
+        print("Erro ao decodificar resposta:", e)
+        print("Resposta bruta:", resp.text)
+    print("Aguardando 15 minutos para gerar novo token...\n")
+    time.sleep(900)  # 900 segundos = 15 minutos 

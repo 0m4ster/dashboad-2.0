@@ -127,7 +127,20 @@ def obter_producao_facta(telefones):
     all_propostas = []
     while True:
         resp = requests.get(url, headers=headers, params=params, timeout=20)
-        data = resp.json()
+        print("Status code:", resp.status_code)
+        print("Headers:", resp.headers)
+        print("Resposta bruta:", resp.text)
+        if 'application/json' in resp.headers.get('Content-Type', ''):
+            try:
+                data = resp.json()
+            except Exception as e:
+                st.error(f"Erro ao decodificar resposta JSON da API Facta: {e}")
+                st.error(f"Resposta bruta: {resp.text}")
+                return [], 0, 0.0
+        else:
+            st.error("A resposta da API Facta não é JSON. Veja o conteúdo retornado no log.")
+            st.error(f"Resposta bruta: {resp.text}")
+            return [], 0, 0.0
         propostas = data.get("propostas", [])
         if not propostas:
             break
