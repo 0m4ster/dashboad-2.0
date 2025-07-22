@@ -49,6 +49,10 @@ def obter_dados_sms():
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
     # Calcular segunda-feira desta semana
     hoje = datetime.now()
+    # Definir a data máxima permitida (ajuste aqui se necessário)
+    max_end_at = datetime(2025, 7, 22, 10, 24)
+    if hoje > max_end_at:
+        hoje = max_end_at
     start_of_week = hoje - timedelta(days=hoje.weekday())
     start_at = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
     end_at = hoje
