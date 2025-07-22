@@ -112,28 +112,22 @@ def limpar_telefone(telefone):
 
 @st.cache_data(ttl=120)
 def obter_producao_facta(telefones):
-    from datetime import datetime, timedelta
+    import re
     url = "https://webservice.facta.com.br/proposta/andamento-propostas"
     facta_token = os.environ.get('FACTA_TOKEN', '')
     headers = {
         "Authorization": f"Bearer {facta_token}"
     }
-    # Buscar dos últimos 30 dias
-    data_fim = datetime.now()
-    data_ini = data_fim - timedelta(days=30)
     params = {
-        "data_ini": data_ini.strftime('%d/%m/%Y'),
-        "data_fim": data_fim.strftime('%d/%m/%Y'),
         "quantidade": 5000,
-        "pagina": 1
+        "pagina": 1,
+        "convenio": 3,
+        "consulta_sub": "N"
     }
     all_propostas = []
     while True:
         resp = requests.get(url, headers=headers, params=params, timeout=20)
-        try:
-            data = resp.json()
-        except Exception:
-            break
+        data = resp.json()
         propostas = data.get("propostas", [])
         if not propostas:
             break
@@ -141,6 +135,10 @@ def obter_producao_facta(telefones):
         if len(propostas) < 5000:
             break
         params["pagina"] += 1
+    def limpar_telefone(telefone):
+        if not telefone:
+            return ""
+        return re.sub(r"\D", "", str(telefone))
     telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
     telefones_batidos = set()
     for p in all_propostas:
