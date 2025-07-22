@@ -94,7 +94,6 @@ def obter_producao_facta(telefones):
         propostas = data.get("propostas", [])
         # Normalizar todos os telefones do Kolmeya
         telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
-        st.write("Telefones Kolmeya normalizados:", telefones_limpos)
         total_vendas = 0
         producao = 0.0
         for p in propostas:
@@ -103,14 +102,12 @@ def obter_producao_facta(telefones):
                 limpar_telefone(p.get("CELULAR", "")),
                 limpar_telefone(p.get("FONE2", ""))
             ]
-            st.write(f"Proposta {p.get('codigo_af', '')} - Telefones:", telefones_proposta)
             if any(tel and tel in telefones_limpos for tel in telefones_proposta):
                 total_vendas += 1
                 try:
                     producao += float(p.get("valor_af", 0))
                 except Exception:
                     pass
-        st.write(f"Total de vendas encontradas: {total_vendas}")
         return [], total_vendas, producao
     except Exception as e:
         st.error(f"Erro ao buscar dados da Facta: {e}")
