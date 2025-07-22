@@ -4,7 +4,11 @@ import streamlit as st
 from datetime import datetime, timedelta
 import re
 import pandas as pd  # Adiciona pandas para compatibilidade com exemplo
-from streamlit_extras.streamlit_autorefresh import st_autorefresh
+try:
+    from streamlit_extras.streamlit_autorefresh import st_autorefresh
+    HAS_AUTOREFRESH = True
+except ImportError:
+    HAS_AUTOREFRESH = False
 import httpx  # Adicionado para garantir uso do httpx
 import ssl
 print("OpenSSL version:", ssl.OPENSSL_VERSION)
@@ -198,7 +202,8 @@ def obter_dados_robo():
 
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
-    st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")  # Atualiza a cada 2 minutos
+    if HAS_AUTOREFRESH:
+        st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")  # Atualiza a cada 2 minutos
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
     # Removido: Mostra o IP do servidor
