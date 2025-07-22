@@ -4,7 +4,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import re
 import pandas as pd  # Adiciona pandas para compatibilidade com exemplo
-from streamlit_autorefresh import st_autorefresh
+from streamlit_extras.streamlit_autorefresh import st_autorefresh
 import httpx  # Adicionado para garantir uso do httpx
 import ssl
 print("OpenSSL version:", ssl.OPENSSL_VERSION)
@@ -54,10 +54,15 @@ def obter_dados_sms(start_at, end_at):
         }
         try:
             resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+            if resp.status_code == 422:
+                try:
+                    st.error(f"Erro 422 na API Kolmeya: {resp.text}")
+                except Exception:
+                    st.error("Erro 422 na API Kolmeya (não foi possível exibir o texto da resposta)")
+                return []
             resp.raise_for_status()
             messages = resp.json().get("messages", [])
             all_messages.extend(messages)
-            # Se vier exatamente 30.000, pode estar truncando, então divida mais
             if len(messages) == 30000:
                 dia = atual
                 while dia < proximo:
@@ -68,6 +73,12 @@ def obter_dados_sms(start_at, end_at):
                         "limit": 30000
                     }
                     resp_dia = requests.post(API_URL, headers=headers, json=body_dia, timeout=20)
+                    if resp_dia.status_code == 422:
+                        try:
+                            st.error(f"Erro 422 na API Kolmeya (dia): {resp_dia.text}")
+                        except Exception:
+                            st.error("Erro 422 na API Kolmeya (dia) (não foi possível exibir o texto da resposta)")
+                        return []
                     resp_dia.raise_for_status()
                     messages_dia = resp_dia.json().get("messages", [])
                     all_messages.extend(messages_dia)
