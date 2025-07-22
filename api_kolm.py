@@ -178,12 +178,14 @@ def obter_producao_facta(telefones):
                 pass
     return list(telefones_batidos), len(telefones_batidos), producao
 
-def obter_telefones_facta_por_cpf(cpfs, ambiente="producao"):
+def obter_telefones_facta_por_cpf(cpfs, ambiente="producao", phpsessid=None):
     """Busca todos os telefones (FONE, CELULAR, FONE2, FONERECADO) de cada CPF na Facta e retorna o set de telefones encontrados."""
     import requests
     import os
     import re
     facta_token = os.environ.get('FACTA_TOKEN', '')
+    if phpsessid is None:
+        phpsessid = os.environ.get('FACTA_PHPSESSID', None)
     if ambiente == "homologacao":
         url_base = "https://webservice-homol.facta.com.br/proposta/consulta-cliente?cpf="
     else:
@@ -191,11 +193,12 @@ def obter_telefones_facta_por_cpf(cpfs, ambiente="producao"):
     headers = {
         "Authorization": f"Bearer {facta_token}"
     }
+    cookies = {"PHPSESSID": phpsessid} if phpsessid else None
     telefones_facta = set()
     for cpf in cpfs:
         url = f"{url_base}{cpf}"
         try:
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, headers=headers, cookies=cookies, timeout=10)
             if resp.status_code != 200:
                 st.warning(f"Facta: resposta {resp.status_code} para CPF {cpf}")
                 continue
@@ -216,6 +219,40 @@ def obter_telefones_facta_por_cpf(cpfs, ambiente="producao"):
             st.warning(f"Erro ao consultar Facta para CPF {cpf}: {e}")
             continue
     return telefones_facta
+
+def obter_andamento_propostas_facta(params=None, ambiente="producao", phpsessid=None):
+    """Consulta o endpoint andamento-propostas da Facta com os parâmetros fornecidos."""
+    import requests
+    import os
+    facta_token = os.environ.get('FACTA_TOKEN', '')
+    if phpsessid is None:
+        phpsessid = os.environ.get('FACTA_PHPSESSID', None)
+    if ambiente == "homologacao":
+        url_base = "https://webservice-homol.facta.com.br/proposta/andamento-propostas"
+    else:
+        url_base = "https://webservice.facta.com.br/proposta/andamento-propostas"
+    headers = {
+        "Authorization": f"Bearer {facta_token}",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+    cookies = {"PHPSESSID": phpsessid} if phpsessid else None
+    try:
+        resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=20)
+        if resp.status_code != 200:
+            st.warning(f"Facta andamento-propostas: resposta {resp.status_code}")
+            return []
+        if 'application/json' not in resp.headers.get('Content-Type', ''):
+            st.warning("Facta andamento-propostas: resposta não JSON")
+            return []
+        data = resp.json()
+        if data.get("erro") is True:
+            st.warning(f"Facta andamento-propostas: erro True. Mensagem: {data.get('mensagem')}")
+            return []
+        return data.get("propostas", [])
+    except Exception as e:
+        st.warning(f"Erro ao consultar andamento-propostas Facta: {e}")
+        return []
 
 API_URL_URA = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
 
@@ -333,6 +370,14 @@ def main():
         len(telefones_batidos),
         ', '.join(sorted(telefones_batidos)) if telefones_batidos else 'Nenhum'
     ), unsafe_allow_html=True)
+
+    # Exemplo de uso:
+    # datas_kolmeya = set(m.get('data_envio') for m in messages if m.get('data_envio'))
+    # centro_custo_kolmeya = set(m.get('centro_custo') for m in messages if m.get('centro_custo'))
+    # params = {"convenio": 3, "quantidade": 5000}  # Adapte conforme necessário
+    # propostas_facta = obter_andamento_propostas_facta(params)
+    # propostas_batidas = [p for p in propostas_facta if p.get('data_movimento') in datas_kolmeya and p.get('centro_custo') in centro_custo_kolmeya]
+    # st.markdown(f"<b>Propostas batidas Facta:</b> {propostas_batidas}", unsafe_allow_html=True)
 
     # --- PAINEL URA ---
     messages_ura = obter_dados_ura(start_at, end_at)
