@@ -114,7 +114,7 @@ def formatar_real(valor):
 def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
     """
     Busca propostas no endpoint andamento-propostas da Facta e filtra pela data_movimento (formato DD/MM/AAAA).
-    Retorna a lista de propostas filtradas.
+    Retorna a lista de propostas filtradas apenas com averbador FGTS.
     """
     facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
@@ -134,8 +134,11 @@ def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
             return []
         data = resp.json()
         propostas = data.get("propostas", [])
-        # Filtrar pela data_movimento
-        propostas_filtradas = [p for p in propostas if p.get("data_movimento") == data_movimento]
+        # Filtrar pela data_movimento se fornecida e apenas FGTS
+        propostas_filtradas = [
+            p for p in propostas
+            if (data_movimento is None or p.get("data_movimento") == data_movimento) and p.get("averbador") == "FGTS"
+        ]
         return propostas_filtradas
     except Exception as e:
         st.warning(f"Erro ao consultar andamento-propostas Facta: {e}")
@@ -188,34 +191,6 @@ def main():
         <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
     </div>
     """, unsafe_allow_html=True)
-
-    # Coletar todas as datas (apenas a parte da data) do Kolmeya
-    datas_kolmeya = set()
-    centros_custo_kolmeya = set()
-    for m in messages:
-        enviada_em = m.get("enviada_em")
-        if enviada_em:
-            datas_kolmeya.add(enviada_em[:10])  # Pega só 'dd/mm/yyyy'
-        centro_custo = m.get("centro_custo")
-        if centro_custo:
-            centros_custo_kolmeya.add(centro_custo)
-
-    # Buscar todas as propostas da Facta (até 5000)
-    propostas_facta = obter_propostas_facta_por_data(None)  # None para buscar todas
-    # Filtrar propostas da Facta cujo averbador está em centros_custo_kolmeya e data_movimento presente nas datas do Kolmeya
-    propostas_batidas = [
-        p for p in propostas_facta
-        if p.get("averbador") in centros_custo_kolmeya and p.get("data_movimento") in datas_kolmeya
-    ]
-    datas_batidas = set(p.get("data_movimento") for p in propostas_batidas)
-
-    st.markdown(f"""
-<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-    <b>Quantidade de propostas (Facta) com averbador presente como centro de custo no Kolmeya e datas batidas:</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_batidas)}</span><br>
-    <span style='font-size: 0.95em; color: #e0d7f7;'>Datas batidas: {', '.join(sorted(datas_batidas)) if datas_batidas else 'Nenhuma'}</span>
-</div>
-""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
