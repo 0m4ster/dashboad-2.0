@@ -36,31 +36,47 @@ def get_today_range():
 
 @st.cache_data(ttl=120)
 def obter_dados_sms(start_at, end_at):
+    from datetime import timedelta
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    # Garantir que end_at não seja posterior a 2025-07-21 16:49
-    max_date = datetime(2025, 7, 21, 16, 49)
-    if end_at > max_date:
-        end_at = max_date
-    body = {
-        "start_at": start_at.strftime('%Y-%m-%d %H:%M'),  # Formato Y-m-d H:i
-        "end_at": end_at.strftime('%Y-%m-%d %H:%M'),      # Formato Y-m-d H:i
-        "limit": 30000
-    }
-    try:
-        resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
-        if resp.status_code == 422:
-            st.error(f"Erro de validação na API: {resp.text}")
+    all_messages = []
+    periodo_max = timedelta(days=7)
+    atual = start_at
+    while atual < end_at:
+        proximo = min(atual + periodo_max, end_at)
+        body = {
+            "start_at": atual.strftime('%Y-%m-%d %H:%M'),
+            "end_at": proximo.strftime('%Y-%m-%d %H:%M'),
+            "limit": 30000
+        }
+        try:
+            resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+            resp.raise_for_status()
+            messages = resp.json().get("messages", [])
+            all_messages.extend(messages)
+            # Se vier exatamente 30.000, pode estar truncando, então divida mais
+            if len(messages) == 30000:
+                dia = atual
+                while dia < proximo:
+                    dia_fim = min(dia + timedelta(days=1), proximo)
+                    body_dia = {
+                        "start_at": dia.strftime('%Y-%m-%d %H:%M'),
+                        "end_at": dia_fim.strftime('%Y-%m-%d %H:%M'),
+                        "limit": 30000
+                    }
+                    resp_dia = requests.post(API_URL, headers=headers, json=body_dia, timeout=20)
+                    resp_dia.raise_for_status()
+                    messages_dia = resp_dia.json().get("messages", [])
+                    all_messages.extend(messages_dia)
+                    dia = dia_fim
+        except Exception as e:
+            st.error(f"Erro ao buscar dados da API: {e}")
             return []
-        resp.raise_for_status()
-        messages = resp.json().get("messages", [])
-        return messages
-    except Exception as e:
-        st.error(f"Erro ao buscar dados da API: {e}")
-        return []
+        atual = proximo
+    return all_messages
 
 def limpar_telefone(telefone):
     if not telefone:
