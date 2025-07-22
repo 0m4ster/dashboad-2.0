@@ -35,13 +35,19 @@ def get_today_range():
     return start_at, end_at
 
 @st.cache_data(ttl=120)
-def obter_dados_sms(start_at, end_at):
-    from datetime import timedelta
+def obter_dados_sms():
+    from datetime import datetime, timedelta
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
+    API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
+    # Calcular segunda-feira desta semana
+    hoje = datetime.now()
+    start_of_week = hoje - timedelta(days=hoje.weekday())
+    start_at = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_at = hoje
     all_messages = []
     periodo_max = timedelta(days=7)
     atual = start_at
@@ -216,7 +222,7 @@ def main():
 
     # --- PAINEL KOLMEYA ---
     start_at, end_at = get_week_range()  # Alterado para pegar a semana a partir de segunda-feira
-    messages = obter_dados_sms(start_at, end_at)
+    messages = obter_dados_sms()
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
