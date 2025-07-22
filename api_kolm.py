@@ -155,6 +155,12 @@ def main():
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
     cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
     telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
+    # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção
+    producao = sum(float(m.get("valor_af", 0)) for m in messages if m.get("valor_af") is not None)
+    total_vendas = sum(1 for m in messages if m.get("averbador") == "FGTS")
+    previsao_faturamento = 0.0
+    ticket_medio = 0.0
+    roi = previsao_faturamento - investimento
 
     st.markdown(f"""
     <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
@@ -171,6 +177,26 @@ def main():
         </div>
         <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
         <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
+        <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
+            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                <span style='color: #fff;'><b>Total de vendas</b></span>
+                <span style='color: #fff;'>{total_vendas}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                <span style='color: #fff;'><b>Produção</b></span>
+                <span style='color: #fff;'>{formatar_real(producao)}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                <span style='color: #fff;'><b>Previsão de faturamento</b></span>
+                <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
+            </div>
+            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                <span style='color: #fff;'><b>Ticket médio</b></span>
+                <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
+            </div>
+        </div>
+        <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
+        <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(roi)}</div>
     </div>
     """, unsafe_allow_html=True)
 
