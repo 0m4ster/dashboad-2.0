@@ -131,6 +131,12 @@ def obter_dados_ura(start_at, end_at):
             st.error(f"Erro na API URA: {data.get('descStatus', 'Erro desconhecido')}")
             return []
         return data.get("tabulacoes", [])
+    except httpx.HTTPError as e:
+        if 'SSLV3_ALERT_HANDSHAKE_FAILURE' in str(e):
+            st.error("Erro ao buscar dados da API URA: Falha de handshake SSL. Verifique o certificado ou tente novamente mais tarde.")
+        else:
+            st.error(f"Erro ao buscar dados da API URA (httpx): {e}")
+        return []
     except Exception as e:
         st.error(f"Erro ao buscar dados da API URA (httpx): {e}")
         return []
@@ -176,14 +182,14 @@ def main():
     )
 
     # --- PAINEL KOLMEYA ---
-    start_at, end_at = get_today_range()
+    start_at, end_at = get_week_range()  # Alterado para pegar a semana a partir de segunda-feira
     messages = obter_dados_sms(start_at, end_at)
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
     telefones_facta, total_vendas, producao = obter_producao_facta(telefones)
-    previsao_faturamento = producao * 1.0
-    ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
+    previsao_faturamento = float(producao) * 1.0
+    ticket_medio = float(producao) / total_vendas if total_vendas > 0 else 0.0
     roi = previsao_faturamento - investimento
 
     # --- PAINEL URA ---
@@ -193,6 +199,10 @@ def main():
     # Para URA, usar o campo correto de telefone
     telefones_ura = [m.get("dddTelefone") for m in messages_ura if m.get("dddTelefone")]
     producao_ura, total_vendas_ura, _ = obter_producao_facta(telefones_ura)
+    try:
+        producao_ura = float(producao_ura)
+    except Exception:
+        producao_ura = 0.0
     previsao_faturamento_ura = producao_ura * 1.0
     ticket_medio_ura = producao_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0
     roi_ura = previsao_faturamento_ura - investimento_ura
