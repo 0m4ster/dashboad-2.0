@@ -48,6 +48,10 @@ def obter_dados_sms():
     }
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
     agora = datetime.now()
+    # Data máxima permitida pela API Kolmeya
+    max_end_at = datetime(2025, 7, 22, 16, 2)
+    if agora > max_end_at:
+        agora = max_end_at
     ontem = agora - timedelta(days=1)
     start_at = ontem.replace(second=0, microsecond=0)
     end_at = agora.replace(second=0, microsecond=0)
@@ -170,6 +174,14 @@ def main():
         <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
     </div>
     """, unsafe_allow_html=True)
+
+    propostas_fgts = obter_propostas_facta_por_data(None)
+    st.markdown(f"""
+<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+    <b>Quantidade de clientes FGTS (Facta):</b>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_fgts)}</span>
+</div>
+""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
