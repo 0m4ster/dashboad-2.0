@@ -113,7 +113,7 @@ def limpar_telefone(telefone):
 @st.cache_data(ttl=120)
 def obter_producao_facta(telefones):
     import re
-    url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+    url = "https://webservice-homol.facta.com.br/proposta/consulta-cliente"
     facta_token = os.environ.get('FACTA_TOKEN', '')
     headers = {
         "Authorization": f"Bearer {facta_token}"
@@ -164,6 +164,31 @@ def obter_producao_facta(telefones):
             except Exception:
                 pass
     return list(telefones_batidos), len(telefones_batidos), producao
+
+def obter_telefones_facta_por_cpf(cpfs):
+    """Busca todos os telefones (FONE, CELULAR, FONE2, FONERECADO) de cada CPF na Facta."""
+    import requests
+    import os
+    facta_token = os.environ.get('FACTA_TOKEN', '')
+    headers = {
+        "Authorization": f"Bearer {facta_token}"
+    }
+    url_base = "https://webservice.facta.com.br/proposta/consulta-cliente?cpf="
+    telefones_facta = set()
+    for cpf in cpfs:
+        url = f"{url_base}{cpf}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            data = resp.json()
+            clientes = data.get("cliente", [])
+            for c in clientes:
+                for campo in ["FONE", "CELULAR", "FONE2", "FONERECADO"]:
+                    tel = limpar_telefone(c.get(campo, ""))
+                    if tel:
+                        telefones_facta.add(tel)
+        except Exception:
+            continue
+    return telefones_facta
 
 API_URL_URA = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
 
@@ -251,9 +276,14 @@ def main():
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
-    emails = [m.get("email") for m in messages if m.get("email")]
-    cpfs = [m.get("cpf") for m in messages if m.get("cpf")]
-    telefones_facta, total_vendas, producao = obter_producao_facta(telefones)
+    cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
+    # Buscar todos os telefones dos clientes na Facta
+    telefones_facta = obter_telefones_facta_por_cpf(cpfs)
+    # Comparar com os telefones do Kolmeya
+    telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
+    telefones_batidos = telefones_limpos & telefones_facta
+    total_vendas = len(telefones_batidos)
+    producao = 0.0  # Não temos valor_af nesse endpoint, só se buscar propostas por CPF
     previsao_faturamento = float(producao) * 1.0
     ticket_medio = float(producao) / total_vendas if total_vendas > 0 else 0.0
     roi = previsao_faturamento - investimento
@@ -339,7 +369,7 @@ def main():
             <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Total de vendas</b></span>
-                     <span style='color: #fff;'>{', '.join(map(str, telefones_facta)) if telefones_facta else '0'}</span>
+                     <span style='color: #fff;'>{', '.join(map(str, telefones_batidos)) if telefones_batidos else '0'}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Produção</b></span>
