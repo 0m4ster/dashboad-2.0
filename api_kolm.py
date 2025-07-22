@@ -232,11 +232,13 @@ def main():
     )
 
     # --- PAINEL KOLMEYA ---
-    start_at, end_at = get_week_range()  # Alterado para pegar a semana a partir de segunda-feira
+    # start_at, end_at = get_week_range()  # Alterado para pegar a semana a partir de segunda-feira
     messages = obter_dados_sms()
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
+    # Adiciona telefone de teste manualmente
+    telefones.append("11992033264")
     telefones_facta, total_vendas, producao = obter_producao_facta(telefones)
     previsao_faturamento = float(producao) * 1.0
     ticket_medio = float(producao) / total_vendas if total_vendas > 0 else 0.0
