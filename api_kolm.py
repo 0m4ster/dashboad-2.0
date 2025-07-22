@@ -111,6 +111,36 @@ def limpar_telefone(telefone):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
+def obter_propostas_facta_por_data(data_movimento, phpsessid=None):
+    """
+    Busca propostas no endpoint andamento-propostas da Facta e filtra pela data_movimento (formato DD/MM/AAAA).
+    Retorna a lista de propostas filtradas.
+    """
+    facta_token = os.environ.get('FACTA_TOKEN', '')
+    if phpsessid is None:
+        phpsessid = os.environ.get('FACTA_PHPSESSID', None)
+    url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+    headers = {
+        "Authorization": f"Bearer {facta_token}",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+    cookies = {"PHPSESSID": phpsessid} if phpsessid else None
+    params = {"quantidade": 5000}
+    try:
+        resp = requests.get(url, headers=headers, cookies=cookies, params=params, timeout=20)
+        if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
+            st.warning("Erro ao buscar propostas Facta.")
+            return []
+        data = resp.json()
+        propostas = data.get("propostas", [])
+        # Filtrar pela data_movimento
+        propostas_filtradas = [p for p in propostas if p.get("data_movimento") == data_movimento]
+        return propostas_filtradas
+    except Exception as e:
+        st.warning(f"Erro ao consultar andamento-propostas Facta: {e}")
+        return []
+
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
@@ -158,6 +188,16 @@ def main():
         <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Exemplo: filtrar por data "22/07/2025"
+    data_filtrar = "22/07/2025"
+    propostas_filtradas = obter_propostas_facta_por_data(data_filtrar)
+    st.markdown(f"""
+<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+    <b>Quantidade de clientes Facta em {data_filtrar}:</b>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_filtradas)}</span>
+</div>
+""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
