@@ -111,7 +111,7 @@ def limpar_telefone(telefone):
 # Função para buscar produção na Facta
 
 @st.cache_data(ttl=120)
-def obter_producao_facta(telefones):
+def obter_producao_facta(telefones, emails=None, cpfs=None):
     import urllib.parse
     from datetime import datetime, timedelta
     url = "https://webservice.facta.com.br/proposta/consulta-cliente"
@@ -143,17 +143,24 @@ def obter_producao_facta(telefones):
             break
         params["pagina"] += 1
     telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
-    telefones_batidos = set()
+    emails_limpos = set(e.lower() for e in emails) if emails else set()
+    cpfs_limpos = set(str(c).zfill(11) for c in cpfs) if cpfs else set()
+    batidos = set()
     for p in all_propostas:
         telefones_proposta = [
             limpar_telefone(p.get("FONE", "")),
             limpar_telefone(p.get("CELULAR", "")),
             limpar_telefone(p.get("FONE2", ""))
         ]
-        for tel in telefones_proposta:
-            if tel and tel in telefones_limpos:
-                telefones_batidos.add(tel)
-                break
+        email_proposta = p.get("EMAIL", "").lower()
+        cpf_proposta = str(p.get("CPF", "")).zfill(11)
+        if (
+            any(tel and tel in telefones_limpos for tel in telefones_proposta)
+            or (email_proposta and email_proposta in emails_limpos)
+            or (cpf_proposta and cpf_proposta in cpfs_limpos)
+        ):
+            # Adiciona uma tupla para identificar o batido
+            batidos.add((cpf_proposta, email_proposta, tuple(telefones_proposta)))
     producao = 0.0
     for p in all_propostas:
         telefones_proposta = [
@@ -161,12 +168,18 @@ def obter_producao_facta(telefones):
             limpar_telefone(p.get("CELULAR", "")),
             limpar_telefone(p.get("FONE2", ""))
         ]
-        if any(tel and tel in telefones_batidos for tel in telefones_proposta):
+        email_proposta = p.get("EMAIL", "").lower()
+        cpf_proposta = str(p.get("CPF", "")).zfill(11)
+        if (
+            any(tel and tel in telefones_limpos for tel in telefones_proposta)
+            or (email_proposta and email_proposta in emails_limpos)
+            or (cpf_proposta and cpf_proposta in cpfs_limpos)
+        ):
             try:
                 producao += float(p.get("valor_af", 0))
             except Exception:
                 pass
-    return list(telefones_batidos), len(telefones_batidos), producao
+    return list(batidos), len(batidos), producao
 
 API_URL_URA = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
 
@@ -254,7 +267,9 @@ def main():
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [m.get("telefone") for m in messages if m.get("telefone")]
-    telefones_facta, total_vendas, producao = obter_producao_facta(telefones)
+    emails = [m.get("email") for m in messages if m.get("email")]
+    cpfs = [m.get("cpf") for m in messages if m.get("cpf")]
+    telefones_facta, total_vendas, producao = obter_producao_facta(telefones, emails, cpfs)
     previsao_faturamento = float(producao) * 1.0
     ticket_medio = float(producao) / total_vendas if total_vendas > 0 else 0.0
     roi = previsao_faturamento - investimento
