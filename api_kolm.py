@@ -189,13 +189,29 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Exemplo: filtrar por data "22/07/2025"
-    data_filtrar = "22/07/2025"
-    propostas_filtradas = obter_propostas_facta_por_data(data_filtrar)
+    # Coletar todas as datas de envio do Kolmeya (formato DD/MM/AAAA)
+    datas_kolmeya = set()
+    centros_custo_kolmeya = set()
+    for m in messages:
+        data_envio = m.get("data_envio")
+        if data_envio:
+            datas_kolmeya.add(data_envio)
+        centro_custo = m.get("centro_custo")
+        if centro_custo:
+            centros_custo_kolmeya.add(centro_custo)
+
+    # Buscar todas as propostas da Facta (até 5000)
+    propostas_facta = obter_propostas_facta_por_data(None)  # None para buscar todas
+    # Filtrar propostas cujo averbador está em centros_custo_kolmeya e data_movimento presente nas datas do Kolmeya
+    propostas_fgts_batidas = [
+        p for p in propostas_facta
+        if p.get("averbador") in centros_custo_kolmeya and p.get("data_movimento") in datas_kolmeya
+    ]
+
     st.markdown(f"""
 <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-    <b>Quantidade de clientes Facta em {data_filtrar}:</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_filtradas)}</span>
+    <b>Quantidade de propostas (Facta) com averbador presente como centro de custo no Kolmeya e datas batidas:</b>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_fgts_batidas)}</span>
 </div>
 """, unsafe_allow_html=True)
 
