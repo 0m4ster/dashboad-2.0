@@ -87,9 +87,9 @@ def limpar_telefone(telefone):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
-def obter_propostas_facta_ultimos_7_dias(phpsessid=None):
+def obter_propostas_facta_semana_atual(phpsessid=None):
     """
-    Busca propostas FGTS no endpoint andamento-propostas da Facta dos últimos 7 dias, com paginação automática.
+    Busca propostas FGTS no endpoint andamento-propostas da Facta da semana atual (segunda-feira até hoje), com paginação automática.
     """
     from datetime import datetime, timedelta
     facta_token = os.environ.get('FACTA_TOKEN', '')
@@ -105,7 +105,8 @@ def obter_propostas_facta_ultimos_7_dias(phpsessid=None):
     propostas_filtradas = []
     pagina = 1
     hoje = datetime.now()
-    data_ini = (hoje - timedelta(days=7)).strftime('%d/%m/%Y')
+    segunda = hoje - timedelta(days=hoje.weekday())
+    data_ini = segunda.strftime('%d/%m/%Y')
     data_fim = hoje.strftime('%d/%m/%Y')
     while True:
         params = {"quantidade": 5000, "pagina": pagina, "data_ini": data_ini, "data_fim": data_fim}
@@ -116,7 +117,7 @@ def obter_propostas_facta_ultimos_7_dias(phpsessid=None):
                 break
             data = resp.json()
             propostas = data.get("propostas", [])
-            propostas_fgts = [p for p in propostas if p.get("averbador") == "FGTS"]
+            propostas_fgts = [p for p in propostas if p.get("averbador", "").strip().upper() == "FGTS"]
             propostas_filtradas.extend(propostas_fgts)
             if len(propostas) < 5000:
                 break
@@ -207,7 +208,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    propostas_fgts = obter_propostas_facta_ultimos_7_dias()
+    propostas_fgts = obter_propostas_facta_semana_atual()
     st.markdown(f"""
 <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
     <b>Quantidade de clientes FGTS (Facta):</b>
