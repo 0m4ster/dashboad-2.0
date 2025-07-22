@@ -125,46 +125,48 @@ def obter_producao_facta(telefones):
     params = {
         "data_ini": data_ini.strftime('%d/%m/%Y'),
         "data_fim": data_fim.strftime('%d/%m/%Y'),
-        "quantidade": 5000
+        "quantidade": 5000,
+        "pagina": 1
     }
-    url_with_params = url + "?" + urllib.parse.urlencode(params)
-    try:
-        resp = requests.get(url_with_params, headers=headers, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
+    all_propostas = []
+    while True:
+        resp = requests.get(url, headers=headers, params=params, timeout=20)
+        try:
+            data = resp.json()
+        except Exception:
+            break
         propostas = data.get("propostas", [])
-        st.write("Telefones enviados para Facta:", telefones)
-        st.write("Quantidade de propostas retornadas pela Facta:", len(propostas))
-        telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
-        telefones_batidos = set()
-        for p in propostas:
-            telefones_proposta = [
-                limpar_telefone(p.get("FONE", "")),
-                limpar_telefone(p.get("CELULAR", "")),
-                limpar_telefone(p.get("FONE2", ""))
-            ]
-            st.write(f"Proposta {p.get('codigo_af', '')} - Telefones: {telefones_proposta}")
-            for tel in telefones_proposta:
-                if tel and tel in telefones_limpos:
-                    telefones_batidos.add(tel)
-                    break
-        st.write("Telefones batidos encontrados:", telefones_batidos)
-        producao = 0.0
-        for p in propostas:
-            telefones_proposta = [
-                limpar_telefone(p.get("FONE", "")),
-                limpar_telefone(p.get("CELULAR", "")),
-                limpar_telefone(p.get("FONE2", ""))
-            ]
-            if any(tel and tel in telefones_batidos for tel in telefones_proposta):
-                try:
-                    producao += float(p.get("valor_af", 0))
-                except Exception:
-                    pass
-        return list(telefones_batidos), len(telefones_batidos), producao
-    except Exception as e:
-        st.error(f"Erro ao buscar dados da Facta: {e}")
-        return [], 0, 0.0
+        if not propostas:
+            break
+        all_propostas.extend(propostas)
+        if len(propostas) < 5000:
+            break
+        params["pagina"] += 1
+    telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
+    telefones_batidos = set()
+    for p in all_propostas:
+        telefones_proposta = [
+            limpar_telefone(p.get("FONE", "")),
+            limpar_telefone(p.get("CELULAR", "")),
+            limpar_telefone(p.get("FONE2", ""))
+        ]
+        for tel in telefones_proposta:
+            if tel and tel in telefones_limpos:
+                telefones_batidos.add(tel)
+                break
+    producao = 0.0
+    for p in all_propostas:
+        telefones_proposta = [
+            limpar_telefone(p.get("FONE", "")),
+            limpar_telefone(p.get("CELULAR", "")),
+            limpar_telefone(p.get("FONE2", ""))
+        ]
+        if any(tel and tel in telefones_batidos for tel in telefones_proposta):
+            try:
+                producao += float(p.get("valor_af", 0))
+            except Exception:
+                pass
+    return list(telefones_batidos), len(telefones_batidos), producao
 
 API_URL_URA = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
 
