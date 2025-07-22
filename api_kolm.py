@@ -135,7 +135,7 @@ def obter_producao_facta(telefones):
         propostas = data.get("propostas", [])
         # Normalizar todos os telefones do Kolmeya
         telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
-        total_vendas = 0
+        telefones_batidos = set()
         producao = 0.0
         for p in propostas:
             telefones_proposta = [
@@ -143,13 +143,15 @@ def obter_producao_facta(telefones):
                 limpar_telefone(p.get("CELULAR", "")),
                 limpar_telefone(p.get("FONE2", ""))
             ]
-            if any(tel and tel in telefones_limpos for tel in telefones_proposta):
-                total_vendas += 1
-                try:
-                    producao += float(p.get("valor_af", 0))
-                except Exception:
-                    pass
-        return [], total_vendas, producao
+            for tel in telefones_proposta:
+                if tel and tel in telefones_limpos:
+                    telefones_batidos.add(tel)
+                    try:
+                        producao += float(p.get("valor_af", 0))
+                    except Exception:
+                        pass
+                    break
+        return list(telefones_batidos), len(telefones_batidos), producao
     except Exception as e:
         st.error(f"Erro ao buscar dados da Facta: {e}")
         return [], 0, 0.0
@@ -321,7 +323,7 @@ def main():
             <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Total de vendas</b></span>
-                    <span style='color: #fff;'>{total_vendas}</span>
+                    <span style='color: #fff;'>{', '.join(map(str, telefones_facta)) if telefones_facta else '0'}</span>
                 </div>
                 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Produção</b></span>
