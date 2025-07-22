@@ -189,13 +189,13 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Coletar todas as datas de envio do Kolmeya (formato DD/MM/AAAA)
+    # Coletar todas as datas de envio do Kolmeya (formato DD/MM/AAAA ou DD/MM/AAAA HH:MM)
     datas_kolmeya = set()
     centros_custo_kolmeya = set()
     for m in messages:
-        data_envio = m.get("data_envio")
-        if data_envio:
-            datas_kolmeya.add(data_envio)
+        enviada_em = m.get("enviada_em")
+        if enviada_em:
+            datas_kolmeya.add(enviada_em[:10])  # Só a data, sem hora
         centro_custo = m.get("centro_custo")
         if centro_custo:
             centros_custo_kolmeya.add(centro_custo)
