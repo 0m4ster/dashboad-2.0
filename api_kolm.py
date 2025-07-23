@@ -135,6 +135,56 @@ def obter_clientes_facta_por_cpfs(cpfs, phpsessid=None):
     st.write("Debug detalhado das respostas da API Facta (consulta-cliente):", respostas_debug)
     return clientes
 
+def buscar_clientes_facta_e_comparar_telefones(telefones, phpsessid=None):
+    """
+    Busca todos os clientes da Facta (ou de uma base local, se disponível) e compara os telefones extraídos dos SMS
+    com os campos FONE, FONE2 e CELULAR de cada cliente. Retorna os clientes que possuem algum telefone igual.
+    """
+    facta_token = os.environ.get('FACTA_TOKEN', '')
+    if phpsessid is None:
+        phpsessid = os.environ.get('FACTA_PHPSESSID', None)
+    facta_env = os.environ.get('FACTA_ENV', 'prod').lower()
+    if facta_env == 'homolog':
+        url_base = "https://webservice-homol.facta.com.br/proposta/consulta-clientes"
+    else:
+        url_base = "https://webservice.facta.com.br/proposta/consulta-clientes"
+    headers = {
+        "Authorization": f"Bearer {facta_token}",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+    cookies = {"PHPSESSID": phpsessid} if phpsessid else None
+    st.write("Telefones extraídos dos SMS:", telefones)
+    clientes = []
+    respostas_debug = []
+    try:
+        # Busca todos os clientes (ajuste o endpoint conforme a documentação da Facta)
+        resp = requests.get(url_base, headers=headers, cookies=cookies, timeout=60)
+        resposta_debug = {
+            "status_code": resp.status_code,
+            "raw_response": resp.text
+        }
+        try:
+            resposta_debug["json"] = resp.json()
+        except Exception as e_json:
+            resposta_debug["json_error"] = str(e_json)
+        respostas_debug.append(resposta_debug)
+        if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
+            data = resp.json()
+            todos_clientes = data.get("clientes", []) if "clientes" in data else data.get("cliente", [])
+            # Normaliza os telefones dos clientes e compara
+            telefones_set = set(telefones)
+            for cliente in todos_clientes:
+                for campo in ["FONE", "FONE2", "CELULAR"]:
+                    tel_cliente = limpar_telefone(cliente.get(campo, ""))
+                    if tel_cliente and tel_cliente in telefones_set:
+                        clientes.append(cliente)
+                        break
+    except Exception as e:
+        respostas_debug.append({"erro": str(e)})
+    st.write("Debug detalhado da busca e comparação de clientes da Facta:", respostas_debug)
+    return clientes
+
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
@@ -161,9 +211,10 @@ def main():
     messages = obter_dados_sms()
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
-    telefones = [m.get("telefone") for m in messages if m.get("telefone")]
+    telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
+    st.write("Telefones extraídos dos SMS:", telefones)
     cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
-    telefones_limpos = set(limpar_telefone(t) for t in telefones if t)
+    st.write("CPFs extraídos dos SMS:", cpfs)
     # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção
     producao = sum(
         float(m.get("valor_af", 0))
@@ -216,13 +267,27 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    clientes_facta = obter_clientes_facta_por_cpfs(cpfs)
-    st.markdown(f"""
-<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-    <b>Quantidade de clientes FGTS (Facta):</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
-</div>
-""", unsafe_allow_html=True)
+    if cpfs:
+        clientes_facta = obter_clientes_facta_por_cpfs(cpfs)
+        st.markdown(f"""
+    <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+        <b>Quantidade de clientes FGTS (Facta):</b>
+        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
+    </div>
+    """, unsafe_allow_html=True)
+    else:
+        st.warning("Nenhum CPF foi extraído dos SMS. Não é possível consultar clientes na Facta sem CPF.")
+
+    if telefones:
+        clientes_facta = buscar_clientes_facta_e_comparar_telefones(telefones)
+        st.markdown(f"""
+    <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+        <b>Quantidade de clientes Facta com telefone encontrado nos SMS:</b>
+        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
+    </div>
+    """, unsafe_allow_html=True)
+    else:
+        st.warning("Nenhum telefone foi extraído dos SMS. Não é possível comparar com clientes da Facta sem telefone.")
 
 if __name__ == "__main__":
     main()
