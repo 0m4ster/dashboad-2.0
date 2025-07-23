@@ -356,15 +356,21 @@ def main():
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
             return
-        df_base["FONE_LIMPO"] = df_base["FONE"].apply(limpar_telefone) if "FONE" in df_base.columns else ""
-        df_base["FONE2_LIMPO"] = df_base["FONE2"].apply(limpar_telefone) if "FONE2" in df_base.columns else ""
-        df_base["CELULAR_LIMPO"] = df_base["CELULAR"].apply(limpar_telefone) if "CELULAR" in df_base.columns else ""
+        # Detecta todas as colunas de telefone possíveis
+        colunas_telefone = [col for col in df_base.columns if col.strip().lower() in ['fone', 'fone2', 'celular', 'telefone']]
+        # Normaliza todos os telefones da base
+        for col in colunas_telefone:
+            df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
+        # Junta todos os telefones limpos da base
+        telefones_limpos_base = set()
+        for col in colunas_telefone:
+            telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
+        # Telefones dos SMS já limpos
         telefones_set = set(telefones)
-        mask = (
-            df_base["FONE_LIMPO"].isin(telefones_set) |
-            df_base["FONE2_LIMPO"].isin(telefones_set) |
-            df_base["CELULAR_LIMPO"].isin(telefones_set)
-        )
+        # Cruzamento: cliente encontrado se qualquer telefone limpo da base estiver nos SMS
+        mask = pd.Series(False, index=df_base.index)
+        for col in colunas_telefone:
+            mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
         clientes_encontrados = df_base[mask]
         st.markdown(f"""
         <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
