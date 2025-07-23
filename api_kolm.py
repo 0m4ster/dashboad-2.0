@@ -40,7 +40,8 @@ def get_today_range():
 
 def obter_dados_sms():
     """
-    Busca os dados de SMS do Kolmeya dos últimos 7 dias (ou menos), sempre enviando os campos obrigatórios start_at e end_at.
+    Busca os dados de SMS do Kolmeya da semana atual, dividindo cada dia em blocos de 1 hora (e, se necessário, em blocos de 15 minutos),
+    para respeitar o limite de 30.000 registros por requisição. Soma todos os registros e retorna o total para o dashboard.
     """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
@@ -49,31 +50,50 @@ def obter_dados_sms():
     }
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
     now = datetime.now()
-    # end_at nunca pode ser maior que o horário atual - subtrai 1 minuto para garantir
-    end_at = now - timedelta(minutes=1)
-    # start_at deve ser no máximo 7 dias antes de end_at
-    start_at = end_at - timedelta(days=6)
-    start_at = start_at.replace(hour=0, minute=0, second=0, microsecond=0)
-    body = {
-        "start_at": start_at.strftime('%Y-%m-%d %H:%M'),
-        "end_at": end_at.strftime('2025-07-23 11:41'),
-        "limit": 30000
-    }
+    start_of_week = now - timedelta(days=now.weekday())
     all_messages = []
-    try:
-        resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
-        if resp.status_code == 422:
+
+    for i in range(7):
+        dia = start_of_week + timedelta(days=i)
+        dia_inicio = dia.replace(hour=0, minute=0, second=0, microsecond=0)
+        if i == 6:
+            dia_fim = min(now - timedelta(minutes=1), dia.replace(hour=23, minute=59, second=0, microsecond=0))
+        else:
+            dia_fim = dia.replace(hour=23, minute=59, second=0, microsecond=0)
+
+        bloco_inicio = dia_inicio
+        while bloco_inicio < dia_fim:
+            bloco_fim = min(bloco_inicio + timedelta(hours=1), dia_fim)
+            body = {
+                "start_at": bloco_inicio.strftime('%Y-%m-%d %H:%M'),
+                "end_at": bloco_fim.strftime('%Y-%m-%d %H:%M'),
+                "limit": 30000
+            }
             try:
-                st.error(f"Erro 422 na API Kolmeya: {resp.text}")
-            except Exception:
-                st.error("Erro 422 na API Kolmeya (não foi possível exibir o texto da resposta)")
-            return []
-        resp.raise_for_status()
-        messages = resp.json().get("messages", [])
-        all_messages.extend(messages)
-    except Exception as e:
-        st.error(f"Erro ao buscar dados da API Kolmeya: {e}")
-        return []
+                resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+                resp.raise_for_status()
+                messages = resp.json().get("messages", [])
+                all_messages.extend(messages)
+                # Se vier exatamente 30.000, pode haver mais registros nesse intervalo, então divide em blocos menores
+                if len(messages) == 30000:
+                    # Divide o bloco em intervalos de 15 minutos
+                    sub_inicio = bloco_inicio
+                    while sub_inicio < bloco_fim:
+                        sub_fim = min(sub_inicio + timedelta(minutes=15), bloco_fim)
+                        sub_body = {
+                            "start_at": sub_inicio.strftime('%Y-%m-%d %H:%M'),
+                            "end_at": sub_fim.strftime('%Y-%m-%d %H:%M'),
+                            "limit": 30000
+                        }
+                        sub_resp = requests.post(API_URL, headers=headers, json=sub_body, timeout=20)
+                        sub_resp.raise_for_status()
+                        sub_messages = sub_resp.json().get("messages", [])
+                        all_messages.extend(sub_messages)
+                        sub_inicio = sub_fim
+                bloco_inicio = bloco_fim
+            except Exception as e:
+                st.error(f"Erro ao buscar dados da API Kolmeya para o intervalo {bloco_inicio} - {bloco_fim}: {e}")
+                bloco_inicio = bloco_fim  # Evita loop infinito em caso de erro
     st.write("Mensagens mais recentes do Kolmeya:", all_messages)
     return all_messages
 
