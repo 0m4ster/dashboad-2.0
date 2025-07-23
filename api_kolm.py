@@ -41,7 +41,7 @@ def get_today_range():
 def obter_dados_sms():
     """
     Busca os dados de SMS do Kolmeya da semana atual, dividindo cada dia em blocos de 1 hora (e, se necessário, em blocos de 15 minutos),
-    para respeitar o limite de 30.000 registros por requisição. Soma todos os registros e retorna o total para o dashboard.
+    para respeitar o limite de 30.000 registros por requisição. Só busca blocos até o horário atual, nunca datas futuras.
     """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
@@ -56,14 +56,25 @@ def obter_dados_sms():
     for i in range(7):
         dia = start_of_week + timedelta(days=i)
         dia_inicio = dia.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Não busca dias no futuro
+        if dia_inicio > now:
+            break
         if i == 6:
             dia_fim = min(now - timedelta(minutes=1), dia.replace(hour=23, minute=59, second=0, microsecond=0))
         else:
             dia_fim = dia.replace(hour=23, minute=59, second=0, microsecond=0)
-
+        if dia_fim > now:
+            dia_fim = now - timedelta(minutes=1)
         bloco_inicio = dia_inicio
         while bloco_inicio < dia_fim:
             bloco_fim = min(bloco_inicio + timedelta(hours=1), dia_fim)
+            # Não busca blocos no futuro
+            if bloco_inicio >= now:
+                break
+            if bloco_fim > now:
+                bloco_fim = now - timedelta(minutes=1)
+                if bloco_fim <= bloco_inicio:
+                    break
             body = {
                 "start_at": bloco_inicio.strftime('%Y-%m-%d %H:%M'),
                 "end_at": bloco_fim.strftime('%Y-%m-%d %H:%M'),
@@ -80,6 +91,12 @@ def obter_dados_sms():
                     sub_inicio = bloco_inicio
                     while sub_inicio < bloco_fim:
                         sub_fim = min(sub_inicio + timedelta(minutes=15), bloco_fim)
+                        if sub_inicio >= now:
+                            break
+                        if sub_fim > now:
+                            sub_fim = now - timedelta(minutes=1)
+                            if sub_fim <= sub_inicio:
+                                break
                         sub_body = {
                             "start_at": sub_inicio.strftime('%Y-%m-%d %H:%M'),
                             "end_at": sub_fim.strftime('%Y-%m-%d %H:%M'),
