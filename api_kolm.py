@@ -87,51 +87,35 @@ def limpar_telefone(telefone):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
-def obter_propostas_facta_semana_atual(phpsessid=None):
+def obter_clientes_facta_por_cpfs(cpfs, phpsessid=None):
     """
-    Busca propostas FGTS no endpoint andamento-propostas da Facta da semana atual (segunda-feira até hoje), com paginação automática.
-    Adiciona logs para depuração.
+    Consulta o endpoint consulta-cliente da Facta para cada CPF fornecido e retorna os dados dos clientes.
     """
-    from datetime import datetime, timedelta
     facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
         phpsessid = os.environ.get('FACTA_PHPSESSID', None)
-    url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+    url_base = "https://webservice.facta.com.br/proposta/consulta-cliente"
     headers = {
         "Authorization": f"Bearer {facta_token}",
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json"
     }
     cookies = {"PHPSESSID": phpsessid} if phpsessid else None
-    propostas_filtradas = []
-    pagina = 1
-    hoje = datetime.now()
-    segunda = hoje - timedelta(days=hoje.weekday())
-    data_ini = segunda.strftime('%d/%m/%Y')
-    data_fim = hoje.strftime('%d/%m/%Y')
-    while True:
-        params = {"quantidade": 5000, "pagina": pagina, "data_ini": data_ini, "data_fim": data_fim}
-        st.write("Parâmetros usados na requisição Facta:", params)
+    clientes = []
+    for cpf in set(cpfs):
+        params = {"cpf": cpf}
         try:
-            resp = requests.get(url, headers=headers, cookies=cookies, params=params, timeout=20)
-            st.write(f"Status code página {pagina}:", resp.status_code)
-            st.write(f"Resposta bruta página {pagina}:", resp.text)
+            resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=20)
+            st.write(f"Consulta cliente CPF {cpf}: status {resp.status_code}")
             if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
-                st.warning(f"Erro ao buscar propostas Facta na página {pagina}.")
-                break
+                st.warning(f"Erro ao consultar cliente Facta para CPF {cpf}.")
+                continue
             data = resp.json()
-            propostas = data.get("propostas", [])
-            st.write(f"Propostas retornadas página {pagina}:", propostas)
-            propostas_fgts = [p for p in propostas if p.get("averbador", "").strip().upper() == "FGTS"]
-            st.write(f"Propostas FGTS página {pagina}:", propostas_fgts)
-            propostas_filtradas.extend(propostas_fgts)
-            if len(propostas) < 5000:
-                break
-            pagina += 1
+            if not data.get("erro") and data.get("cliente"):
+                clientes.extend(data["cliente"])
         except Exception as e:
-            st.warning(f"Erro ao consultar andamento-propostas Facta (página {pagina}): {e}")
-            break
-    return propostas_filtradas
+            st.warning(f"Erro ao consultar cliente Facta para CPF {cpf}: {e}")
+    return clientes
 
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
@@ -214,14 +198,11 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    propostas_fgts = obter_propostas_facta_semana_atual()
-    producao_facta = sum(float(p.get("valor_af", 0)) for p in propostas_fgts if p.get("valor_af") is not None)
+    clientes_facta = obter_clientes_facta_por_cpfs(cpfs)
     st.markdown(f"""
 <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
     <b>Quantidade de clientes FGTS (Facta):</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_fgts)}</span><br>
-    <b>Produção Facta (valor_af):</b>
-    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{formatar_real(producao_facta)}</span>
+    <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
 </div>
 """, unsafe_allow_html=True)
 
