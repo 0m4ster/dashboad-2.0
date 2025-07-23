@@ -217,6 +217,17 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
     except Exception as e:
         return {"codStatus": 0, "descStatus": str(e), "qtdeRegistros": 0, "tabulacoes": []}
 
+@st.cache_data(ttl=600)
+def ler_base(uploaded_file):
+    if uploaded_file.name.endswith('.csv'):
+        try:
+            return pd.read_csv(uploaded_file, dtype=str, sep=';')
+        except Exception:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, dtype=str, sep=',')
+    else:
+        return pd.read_excel(uploaded_file, dtype=str)
+
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
