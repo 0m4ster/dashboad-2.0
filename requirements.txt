@@ -3,4 +3,4 @@ requests
 httpx
 pandas
 streamlit-autorefresh
-# Adicione outros pacotes necessários aqui 
+openpyxl>=3.0.0
