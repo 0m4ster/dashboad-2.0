@@ -107,14 +107,17 @@ def obter_clientes_facta_por_cpfs(cpfs, phpsessid=None):
         try:
             resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=20)
             st.write(f"Consulta cliente CPF {cpf}: status {resp.status_code}")
+            st.write(f"Resposta bruta para CPF {cpf}: {resp.text}")  # Debug: mostra resposta bruta
             if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
                 st.warning(f"Erro ao consultar cliente Facta para CPF {cpf}.")
                 continue
             data = resp.json()
+            st.write(f"JSON decodificado para CPF {cpf}: {data}")  # Debug: mostra JSON decodificado
             if not data.get("erro") and data.get("cliente"):
                 clientes.extend(data["cliente"])
         except Exception as e:
             st.warning(f"Erro ao consultar cliente Facta para CPF {cpf}: {e}")
+    st.write(f"Lista final de clientes retornados: {clientes}")  # Debug: mostra lista final
     return clientes
 
 def main():
