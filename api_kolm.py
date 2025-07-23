@@ -101,23 +101,34 @@ def obter_clientes_facta_por_cpfs(cpfs, phpsessid=None):
         "Accept": "application/json"
     }
     cookies = {"PHPSESSID": phpsessid} if phpsessid else None
+    st.write("CPFs enviados para consulta na Facta:", cpfs)  # Debug: mostra CPFs enviados
     clientes = []
+    respostas_debug = []  # Lista para armazenar debug de cada resposta
     for cpf in set(cpfs):
         params = {"cpf": cpf}
         try:
             resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=20)
-            st.write(f"Consulta cliente CPF {cpf}: status {resp.status_code}")
-            st.write(f"Resposta bruta para CPF {cpf}: {resp.text}")  # Debug: mostra resposta bruta
+            resposta_debug = {
+                "cpf": cpf,
+                "status_code": resp.status_code,
+                "raw_response": resp.text
+            }
+            try:
+                resposta_debug["json"] = resp.json()
+            except Exception as e_json:
+                resposta_debug["json_error"] = str(e_json)
+            respostas_debug.append(resposta_debug)
             if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
-                st.warning(f"Erro ao consultar cliente Facta para CPF {cpf}.")
                 continue
             data = resp.json()
-            st.write(f"JSON decodificado para CPF {cpf}: {data}")  # Debug: mostra JSON decodificado
             if not data.get("erro") and data.get("cliente"):
                 clientes.extend(data["cliente"])
         except Exception as e:
-            st.warning(f"Erro ao consultar cliente Facta para CPF {cpf}: {e}")
-    st.write(f"Lista final de clientes retornados: {clientes}")  # Debug: mostra lista final
+            respostas_debug.append({
+                "cpf": cpf,
+                "erro": str(e)
+            })
+    st.write("Debug detalhado das respostas da API Facta (consulta-cliente):", respostas_debug)
     return clientes
 
 def main():
