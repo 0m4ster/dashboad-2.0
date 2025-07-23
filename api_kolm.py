@@ -344,10 +344,18 @@ def main():
     # --- UPLOAD DE BASE LOCAL ---
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
     if uploaded_file is not None:
-        if uploaded_file.name.endswith(".csv"):
-            df_base = pd.read_csv(uploaded_file, dtype=str)
-        else:
-            df_base = pd.read_excel(uploaded_file, dtype=str)
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                try:
+                    df_base = pd.read_csv(uploaded_file, dtype=str, sep=';')
+                except Exception:
+                    uploaded_file.seek(0)
+                    df_base = pd.read_csv(uploaded_file, dtype=str, sep=',')
+            else:
+                df_base = pd.read_excel(uploaded_file, dtype=str)
+        except Exception as e:
+            st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
+            return
         df_base["FONE_LIMPO"] = df_base["FONE"].apply(limpar_telefone) if "FONE" in df_base.columns else ""
         df_base["FONE2_LIMPO"] = df_base["FONE2"].apply(limpar_telefone) if "FONE2" in df_base.columns else ""
         df_base["CELULAR_LIMPO"] = df_base["CELULAR"].apply(limpar_telefone) if "CELULAR" in df_base.columns else ""
