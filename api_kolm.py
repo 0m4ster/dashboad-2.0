@@ -40,7 +40,7 @@ def get_today_range():
 
 def obter_dados_sms():
     """
-    Busca os dados de SMS do Kolmeya da semana atual, garantindo que end_at nunca seja maior que o horário atual.
+    Busca os dados de SMS do Kolmeya da semana atual, garantindo que end_at nunca seja maior que o horário atual do servidor Kolmeya.
     """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
@@ -53,7 +53,8 @@ def obter_dados_sms():
     start_of_week = hoje - timedelta(days=hoje.weekday())
     start_at = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
     now = datetime.now()
-    end_at = now  # end_at nunca será maior que o horário atual
+    # Subtrai 1 minuto para garantir que end_at não ultrapasse o horário do servidor Kolmeya
+    end_at = now - timedelta(minutes=1)
     body = {
         "start_at": start_at.strftime('%Y-%m-%d %H:%M'),
         "end_at": end_at.strftime('%Y-%m-%d %H:%M'),
