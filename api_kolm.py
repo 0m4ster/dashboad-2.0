@@ -370,17 +370,27 @@ def main():
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
             return
-        colunas_telefone = [col for col in df_base.columns if col.strip().lower() in ['fone', 'fone2', 'celular', 'telefone']]
+        # Inclui colunas de telefone padrão e também as que já terminam com _LIMPO
+        colunas_telefone = [col for col in df_base.columns if col.strip().lower() in ['fone', 'fone2', 'celular', 'telefone'] or col.strip().lower().endswith('_limpo')]
+        # Só limpa as colunas que ainda não estão limpas
         for col in colunas_telefone:
-            df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
+            if not col.lower().endswith('_limpo'):
+                df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
         telefones_limpos_base = set()
         for col in colunas_telefone:
-            telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
+            # Se já for _LIMPO, usa direto; senão, usa a coluna auxiliar criada
+            if col.lower().endswith('_limpo'):
+                telefones_limpos_base.update(df_base[col].dropna().unique())
+            else:
+                telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
         # Telefones dos SMS já limpos e padronizados
         telefones_set = set(limpar_telefone(t) for t in telefones if t)
         mask = pd.Series(False, index=df_base.index)
         for col in colunas_telefone:
-            mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
+            if col.lower().endswith('_limpo'):
+                mask = mask | df_base[col].isin(telefones_set)
+            else:
+                mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
         clientes_encontrados = df_base[mask]
         st.markdown(f"""
         <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
