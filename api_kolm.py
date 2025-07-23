@@ -4,6 +4,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import re
 import pandas as pd  # Adiciona pandas para compatibilidade com exemplo
+import io
 try:
     from streamlit_extras.streamlit_autorefresh import st_autorefresh
     HAS_AUTOREFRESH = True
@@ -109,9 +110,9 @@ def obter_dados_sms():
                         sub_inicio = sub_fim
                 bloco_inicio = bloco_fim
             except Exception as e:
-                st.error(f"Erro ao buscar dados da API Kolmeya para o intervalo {bloco_inicio} - {bloco_fim}: {e}")
+                # st.error(f"Erro ao buscar dados da API Kolmeya para o intervalo {bloco_inicio} - {bloco_fim}: {e}")
                 bloco_inicio = bloco_fim  # Evita loop infinito em caso de erro
-    st.write("Mensagens mais recentes do Kolmeya:", all_messages)
+    # st.write("Mensagens mais recentes do Kolmeya:", all_messages)
     return all_messages
 
 def limpar_telefone(telefone):
@@ -124,103 +125,55 @@ def limpar_telefone(telefone):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
-def obter_clientes_facta_por_cpfs(cpfs, phpsessid=None):
+def obter_propostas_facta(data_ini=None, data_fim=None, cpf=None, pagina=1, quantidade=5000, phpsessid=None):
     """
-    Consulta o endpoint consulta-cliente da Facta para cada CPF fornecido e retorna os dados dos clientes.
+    Consulta o endpoint andamento-propostas da Facta, paginando até trazer todos os resultados do período.
     """
     facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
         phpsessid = os.environ.get('FACTA_PHPSESSID', None)
     facta_env = os.environ.get('FACTA_ENV', 'prod').lower()
     if facta_env == 'homolog':
-        url_base = "https://webservice-homol.facta.com.br/proposta/consulta-cliente"
+        url_base = "https://webservice-homol.facta.com.br/proposta/andamento-propostas"
     else:
-        url_base = "https://webservice.facta.com.br/proposta/consulta-cliente"
+        url_base = "https://webservice.facta.com.br/proposta/andamento-propostas"
     headers = {
         "Authorization": f"Bearer {facta_token}",
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json"
     }
     cookies = {"PHPSESSID": phpsessid} if phpsessid else None
-    st.write("CPFs enviados para consulta na Facta:", cpfs)  # Debug: mostra CPFs enviados
-    clientes = []
-    respostas_debug = []  # Lista para armazenar debug de cada resposta
-    for cpf in set(cpfs):
-        params = {"cpf": cpf}
-        try:
-            resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=20)
-            resposta_debug = {
-                "cpf": cpf,
-                "status_code": resp.status_code,
-                "raw_response": resp.text
-            }
-            try:
-                resposta_debug["json"] = resp.json()
-            except Exception as e_json:
-                resposta_debug["json_error"] = str(e_json)
-            respostas_debug.append(resposta_debug)
-            if resp.status_code != 200 or 'application/json' not in resp.headers.get('Content-Type', ''):
-                continue
-            data = resp.json()
-            if not data.get("erro") and data.get("cliente"):
-                clientes.extend(data["cliente"])
-        except Exception as e:
-            respostas_debug.append({
-                "cpf": cpf,
-                "erro": str(e)
-            })
-    st.write("Debug detalhado das respostas da API Facta (consulta-cliente):", respostas_debug)
-    return clientes
 
-def buscar_clientes_facta_e_comparar_telefones(telefones, phpsessid=None):
-    """
-    Busca todos os clientes da Facta (ou de uma base local, se disponível) e compara os telefones extraídos dos SMS
-    com os campos FONE, FONE2 e CELULAR de cada cliente. Retorna os clientes que possuem algum telefone igual.
-    """
-    facta_token = os.environ.get('FACTA_TOKEN', '')
-    if phpsessid is None:
-        phpsessid = os.environ.get('FACTA_PHPSESSID', None)
-    facta_env = os.environ.get('FACTA_ENV', 'prod').lower()
-    if facta_env == 'homolog':
-        url_base = "https://webservice-homol.facta.com.br/proposta/consulta-clientes"
-    else:
-        url_base = "https://webservice.facta.com.br/proposta/consulta-clientes"
-    headers = {
-        "Authorization": f"Bearer {facta_token}",
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
-    }
-    cookies = {"PHPSESSID": phpsessid} if phpsessid else None
-    # st.write("Telefones extraídos dos SMS:", telefones)  # Removido para evitar duplicidade
-    clientes = []
-    respostas_debug = []
-    try:
-        # Busca todos os clientes (ajuste o endpoint conforme a documentação da Facta)
-        resp = requests.get(url_base, headers=headers, cookies=cookies, timeout=60)
-        resposta_debug = {
-            "status_code": resp.status_code,
-            "raw_response": resp.text
+    # Datas padrão: últimos 7 dias
+    if not data_fim:
+        data_fim = datetime.now().strftime('%d/%m/%Y')
+    if not data_ini:
+        data_ini = (datetime.now() - timedelta(days=7)).strftime('%d/%m/%Y')
+
+    propostas = []
+    while True:
+        params = {
+            "data_ini": data_ini,
+            "data_fim": data_fim,
+            "pagina": pagina,
+            "quantidade": quantidade
         }
+        if cpf:
+            params["cpf"] = cpf
         try:
-            resposta_debug["json"] = resp.json()
-        except Exception as e_json:
-            resposta_debug["json_error"] = str(e_json)
-        respostas_debug.append(resposta_debug)
-        if resp.status_code == 200 and 'application/json' in resp.headers.get('Content-Type', ''):
+            resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=30)
+            resp.raise_for_status()
             data = resp.json()
-            todos_clientes = data.get("clientes", []) if "clientes" in data else data.get("cliente", [])
-            # Normaliza os telefones dos clientes e compara
-            telefones_set = set(telefones)
-            for cliente in todos_clientes:
-                for campo in ["FONE", "FONE2", "CELULAR"]:
-                    tel_cliente = limpar_telefone(cliente.get(campo, ""))
-                    if tel_cliente and tel_cliente in telefones_set:
-                        clientes.append(cliente)
-                        break
-    except Exception as e:
-        respostas_debug.append({"erro": str(e)})
-    st.write("Debug detalhado da busca e comparação de clientes da Facta:", respostas_debug)
-    return clientes
+            if data.get("erro"):
+                break
+            propostas_page = data.get("propostas", [])
+            propostas.extend(propostas_page)
+            if len(propostas_page) < quantidade:
+                break
+            pagina += 1
+        except Exception as e:
+            break
+    return propostas
 
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
@@ -249,9 +202,9 @@ def main():
     quantidade_sms = len(messages)
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
-    st.write("Telefones extraídos dos SMS:", telefones)
+    # st.write("Telefones extraídos dos SMS:", telefones)
     cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
-    st.write("CPFs extraídos dos SMS:", cpfs)
+    # st.write("CPFs extraídos dos SMS:", cpfs)
     # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção
     producao = sum(
         float(m.get("valor_af", 0))
@@ -304,27 +257,45 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    if cpfs:
-        clientes_facta = obter_clientes_facta_por_cpfs(cpfs)
+    # --- UPLOAD DE BASE LOCAL ---
+    uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
+    if uploaded_file is not None:
+        if uploaded_file.name.endswith(".csv"):
+            df_base = pd.read_csv(uploaded_file, dtype=str)
+        else:
+            df_base = pd.read_excel(uploaded_file, dtype=str)
+        df_base["FONE_LIMPO"] = df_base["FONE"].apply(limpar_telefone) if "FONE" in df_base.columns else ""
+        df_base["FONE2_LIMPO"] = df_base["FONE2"].apply(limpar_telefone) if "FONE2" in df_base.columns else ""
+        df_base["CELULAR_LIMPO"] = df_base["CELULAR"].apply(limpar_telefone) if "CELULAR" in df_base.columns else ""
+        telefones_set = set(telefones)
+        mask = (
+            df_base["FONE_LIMPO"].isin(telefones_set) |
+            df_base["FONE2_LIMPO"].isin(telefones_set) |
+            df_base["CELULAR_LIMPO"].isin(telefones_set)
+        )
+        clientes_encontrados = df_base[mask]
         st.markdown(f"""
-    <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-        <b>Quantidade de clientes FGTS (Facta):</b>
-        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
-    </div>
-    """, unsafe_allow_html=True)
-    else:
-        st.warning("Nenhum CPF foi extraído dos SMS. Não é possível consultar clientes na Facta sem CPF.")
-
-    if telefones:
-        clientes_facta = buscar_clientes_facta_e_comparar_telefones(telefones)
-        st.markdown(f"""
-    <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-        <b>Quantidade de clientes Facta com telefone encontrado nos SMS:</b>
-        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
-    </div>
-    """, unsafe_allow_html=True)
-    else:
-        st.warning("Nenhum telefone foi extraído dos SMS. Não é possível comparar com clientes da Facta sem telefone.")
+        <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+            <b>Quantidade de clientes encontrados na base local com telefone nos SMS:</b>
+            <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_encontrados)}</span><br>
+        </div>
+        """, unsafe_allow_html=True)
+        csv = clientes_encontrados.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Baixar resultado cruzado (.csv)",
+            data=csv,
+            file_name="clientes_encontrados.csv",
+            mime="text/csv"
+        )
+        # Permite consulta Facta por CPF encontrado
+        if "CPF" in clientes_encontrados.columns:
+            cpfs_encontrados = clientes_encontrados["CPF"].dropna().unique().tolist()
+            if st.button("Consultar propostas na Facta por CPF encontrado"):
+                propostas_facta = []
+                for cpf in cpfs_encontrados:
+                    propostas_facta.extend(obter_propostas_facta(cpf=cpf))
+                st.markdown(f"<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'><b>Quantidade de propostas consultadas na Facta:</b> <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_facta)}</span></div>", unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame(propostas_facta))
 
 if __name__ == "__main__":
     main()
