@@ -185,28 +185,6 @@ def buscar_clientes_facta_e_comparar_telefones(telefones, phpsessid=None):
     st.write("Debug detalhado da busca e comparação de clientes da Facta:", respostas_debug)
     return clientes
 
-def buscar_clientes_base_local_por_telefones(telefones, caminho_csv="clientes.csv"):
-    """
-    Lê uma base local de clientes (CSV) e compara os telefones extraídos dos SMS
-    com os campos FONE, FONE2 e CELULAR de cada cliente. Retorna os clientes que possuem algum telefone igual.
-    """
-    st.write(f"Lendo base local de clientes: {caminho_csv}")
-    try:
-        df = pd.read_csv(caminho_csv, dtype=str)
-    except Exception as e:
-        st.error(f"Erro ao ler a base local de clientes: {e}")
-        return []
-    clientes_encontrados = []
-    telefones_set = set(telefones)
-    for _, cliente in df.iterrows():
-        for campo in ["FONE", "FONE2", "CELULAR"]:
-            tel_cliente = limpar_telefone(cliente.get(campo, ""))
-            if tel_cliente and tel_cliente in telefones_set:
-                clientes_encontrados.append(cliente.to_dict())
-                break
-    st.write("Clientes encontrados na base local com telefone nos SMS:", clientes_encontrados)
-    return clientes_encontrados
-
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
@@ -235,6 +213,8 @@ def main():
     investimento = quantidade_sms * CUSTO_POR_ENVIO
     telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
     st.write("Telefones extraídos dos SMS:", telefones)
+    cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
+    st.write("CPFs extraídos dos SMS:", cpfs)
     # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção
     producao = sum(
         float(m.get("valor_af", 0))
@@ -287,16 +267,27 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    if telefones:
-        clientes_encontrados = buscar_clientes_base_local_por_telefones(telefones)
+    if cpfs:
+        clientes_facta = obter_clientes_facta_por_cpfs(cpfs)
         st.markdown(f"""
     <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-        <b>Quantidade de clientes encontrados na base local com telefone nos SMS:</b>
-        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_encontrados)}</span><br>
+        <b>Quantidade de clientes FGTS (Facta):</b>
+        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
     </div>
     """, unsafe_allow_html=True)
     else:
-        st.warning("Nenhum telefone foi extraído dos SMS. Não é possível comparar com clientes da base local sem telefone.")
+        st.warning("Nenhum CPF foi extraído dos SMS. Não é possível consultar clientes na Facta sem CPF.")
+
+    if telefones:
+        clientes_facta = buscar_clientes_facta_e_comparar_telefones(telefones)
+        st.markdown(f"""
+    <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
+        <b>Quantidade de clientes Facta com telefone encontrado nos SMS:</b>
+        <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_facta)}</span><br>
+    </div>
+    """, unsafe_allow_html=True)
+    else:
+        st.warning("Nenhum telefone foi extraído dos SMS. Não é possível comparar com clientes da Facta sem telefone.")
 
 if __name__ == "__main__":
     main()
