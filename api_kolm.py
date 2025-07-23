@@ -256,7 +256,7 @@ def main():
             <div style='display: flex; justify-content: space-between; margin-bottom: 12px;'>
                 <div style='text-align: center;'>
                     <div style='font-size: 1.1em; color: #e0d7f7;'>Quantidade de SMS</div>
-                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{quantidade_sms:,d}</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{str(quantidade_sms).replace(',', '.').replace('.', '.', 1) if quantidade_sms < 1000 else f'{quantidade_sms:,}'.replace(",", ".")}</div>
                 </div>
                 <div style='text-align: center;'>
                     <div style='font-size: 1.1em; color: #e0d7f7;'>Custo por envio</div>
@@ -289,22 +289,57 @@ def main():
         """, unsafe_allow_html=True)
 
     with col2:
-        st.markdown("<h4 style='color:#fff; text-align:center;'>URA</h4>", unsafe_allow_html=True)
-        # Parâmetros configuráveis
-        idCampanha = st.number_input("ID da Campanha URA", min_value=1, value=1, step=1)
-        periodoInicial = st.date_input("Período inicial URA", value=(datetime.now() - timedelta(days=7))).strftime('%Y-%m-%dT00:00:00')
-        periodoFinal = st.date_input("Período final URA", value=datetime.now()).strftime('%Y-%m-%dT23:59:59')
+        # --- PAINEL URA ---
+        CUSTO_POR_LIGACAO_URA = 0.034444
+        idCampanha = 1  # Fixo
+        periodoInicial = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%dT00:00:00')
+        periodoFinal = datetime.now().strftime('%Y-%m-%dT23:59:59')
         dados_ura = obter_dados_ura(idCampanha, periodoInicial, periodoFinal)
-        qtde_registros = dados_ura.get("qtdeRegistros", 0)
-        investimento_ura = qtde_registros * 0.03  # Exemplo: R$ 0,03 por ligação
-        st.markdown(f'''
+        quantidade_ura = dados_ura.get("qtdeRegistros", 0)
+        investimento_ura = quantidade_ura * CUSTO_POR_LIGACAO_URA
+        # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção URA
+        producao_ura = 0.0
+        total_vendas_ura = 0
+        previsao_faturamento_ura = 0.0
+        ticket_medio_ura = 0.0
+        roi_ura = previsao_faturamento_ura - investimento_ura
+        st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
-            <div style='font-size: 1.1em; color: #e0d7f7;'>Quantidade de URA</div>
-            <div style='font-size: 2em; font-weight: bold; color: #fff;'>{qtde_registros:,d}</div>
-            <div style='font-size: 1.1em; margin-top: 16px; color: #e0d7f7;'>Investimento</div>
-            <div style='font-size: 2em; font-weight: bold; color: #fff;'>R$ {investimento_ura:,.2f}</div>
+            <h4 style='color:#fff; text-align:center;'>URA</h4>
+            <div style='display: flex; justify-content: space-between; margin-bottom: 12px;'>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Quantidade de URA</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{str(quantidade_ura).replace(',', '.').replace('.', '.', 1) if quantidade_ura < 1000 else f'{quantidade_ura:,}'.replace(",", ".")}</div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Custo por ligação</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_LIGACAO_URA)}</div>
+                </div>
+            </div>
+            <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
+            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento_ura)}</div>
+            <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #fff;'><b>Total de vendas</b></span>
+                    <span style='color: #fff;'>{total_vendas_ura}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #fff;'><b>Produção</b></span>
+                    <span style='color: #fff;'>{formatar_real(producao_ura)}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #fff;'><b>Previsão de faturamento</b></span>
+                    <span style='color: #fff;'>{formatar_real(previsao_faturamento_ura)}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='color: #fff;'><b>Ticket médio</b></span>
+                    <span style='color: #fff;'>{formatar_real(ticket_medio_ura)}</span>
+                </div>
+            </div>
+            <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
+            <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(roi_ura)}</div>
         </div>
-        ''', unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
     # --- UPLOAD DE BASE LOCAL ---
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
@@ -336,7 +371,6 @@ def main():
             file_name="clientes_encontrados.csv",
             mime="text/csv"
         )
-        # Permite consulta Facta por CPF encontrado
         if "CPF" in clientes_encontrados.columns:
             cpfs_encontrados = clientes_encontrados["CPF"].dropna().unique().tolist()
             if st.button("Consultar propostas na Facta por CPF encontrado"):
