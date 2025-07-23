@@ -382,19 +382,24 @@ def main():
         for col in colunas_telefone:
             if not col.lower().endswith('_limpo'):
                 df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
+        # Função auxiliar para validar telefones
+        def is_telefone_valido(t):
+            return isinstance(t, str) and t.isdigit() and 10 <= len(t) <= 11
+
         telefones_limpos_base = set()
         for col in colunas_telefone:
-            # Se já for _LIMPO, usa direto; senão, usa a coluna auxiliar criada
             if col.lower().endswith('_limpo'):
-                telefones_limpos_base.update(df_base[col].dropna().unique())
+                telefones_col = df_base[col].dropna().unique()
             else:
-                telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
+                telefones_col = df_base[f"{col}_LIMPO"].dropna().unique()
+            # Só adiciona se for número de telefone válido
+            telefones_limpos_base.update([t for t in telefones_col if is_telefone_valido(t)])
         # Telefones dos SMS já limpos e padronizados
-        telefones_set = set(limpar_telefone(t) for t in telefones if t)
+        telefones_set = set([t for t in telefones if is_telefone_valido(t)])
         # DEBUG VISUAL
         st.write("Colunas detectadas:", df_base.columns.tolist())
-        st.write("Exemplo telefones base local:", list(telefones_limpos_base)[:10])
-        st.write("Exemplo telefones SMS:", list(telefones_set)[:10])
+        st.write("Exemplo telefones base local (válidos):", list(telefones_limpos_base)[:10])
+        st.write("Exemplo telefones SMS (válidos):", list(telefones_set)[:10])
         mask = pd.Series(False, index=df_base.index)
         for col in colunas_telefone:
             if col.lower().endswith('_limpo'):
