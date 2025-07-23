@@ -56,7 +56,7 @@ def obter_dados_sms():
     start_at = start_at.replace(hour=0, minute=0, second=0, microsecond=0)
     body = {
         "start_at": start_at.strftime('%Y-%m-%d %H:%M'),
-        "end_at": end_at.strftime('%Y-%m-%d %H:%M'),
+        "end_at": end_at.strftime('2025-07-23 11:41'),
         "limit": 30000
     }
     all_messages = []
