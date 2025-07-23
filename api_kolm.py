@@ -385,6 +385,10 @@ def main():
                 telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
         # Telefones dos SMS já limpos e padronizados
         telefones_set = set(limpar_telefone(t) for t in telefones if t)
+        # DEBUG VISUAL
+        st.write("Colunas detectadas:", df_base.columns.tolist())
+        st.write("Exemplo telefones base local:", list(telefones_limpos_base)[:10])
+        st.write("Exemplo telefones SMS:", list(telefones_set)[:10])
         mask = pd.Series(False, index=df_base.index)
         for col in colunas_telefone:
             if col.lower().endswith('_limpo'):
