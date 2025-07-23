@@ -38,29 +38,25 @@ def get_today_range():
     end_at = min(end_of_day, now)
     return start_at, end_at
 
-@st.cache_data(ttl=120)
 def obter_dados_sms():
-    from datetime import datetime, timedelta
+    """
+    Busca os dados de SMS do Kolmeya do dia atual (hoje), sem cache, para garantir atualização em tempo real.
+    """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
-    agora = datetime.now()
-    # Data máxima permitida pela API Kolmeya
-    max_end_at = datetime(2025, 7, 22, 16, 2)
-    if agora > max_end_at:
-        agora = max_end_at
-    sete_dias_atras = agora - timedelta(days=7)
-    start_at = sete_dias_atras.replace(second=0, microsecond=0)
-    end_at = agora.replace(second=0, microsecond=0)
-    all_messages = []
+    hoje = datetime.now()
+    start_at = hoje.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_at = hoje.replace(hour=23, minute=59, second=59, microsecond=999999)
     body = {
         "start_at": start_at.strftime('%Y-%m-%d %H:%M'),
         "end_at": end_at.strftime('%Y-%m-%d %H:%M'),
         "limit": 30000
     }
+    all_messages = []
     try:
         resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
         if resp.status_code == 422:
@@ -73,8 +69,9 @@ def obter_dados_sms():
         messages = resp.json().get("messages", [])
         all_messages.extend(messages)
     except Exception as e:
-        st.error(f"Erro ao buscar dados da API: {e}")
+        st.error(f"Erro ao buscar dados da API Kolmeya: {e}")
         return []
+    st.write("Mensagens mais recentes do Kolmeya:", all_messages)
     return all_messages
 
 def limpar_telefone(telefone):
