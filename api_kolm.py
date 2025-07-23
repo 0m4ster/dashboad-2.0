@@ -256,8 +256,14 @@ def main():
         messages = obter_dados_sms()
         quantidade_sms = len(messages)
         investimento = quantidade_sms * CUSTO_POR_ENVIO
-        telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
-        cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
+        # CORRIGIDO: Garante que só pega o campo 'telefone' de cada mensagem
+        telefones = []
+        for m in messages:
+            tel = m.get('telefone') if isinstance(m, dict) else None
+            if tel:
+                telefones.append(limpar_telefone(tel))
+        st.write('Debug - Telefones extraídos dos SMS:', telefones[:10])
+        cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
         producao = sum(
             float(m.get("valor_af", 0))
             for m in messages
