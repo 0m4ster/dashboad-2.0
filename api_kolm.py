@@ -94,7 +94,11 @@ def obter_clientes_facta_por_cpfs(cpfs, phpsessid=None):
     facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
         phpsessid = os.environ.get('FACTA_PHPSESSID', None)
-    url_base = "https://webservice.facta.com.br/proposta/consulta-cliente"
+    facta_env = os.environ.get('FACTA_ENV', 'prod').lower()
+    if facta_env == 'homolog':
+        url_base = "https://webservice-homol.facta.com.br/proposta/consulta-cliente"
+    else:
+        url_base = "https://webservice.facta.com.br/proposta/consulta-cliente"
     headers = {
         "Authorization": f"Bearer {facta_token}",
         "User-Agent": "Mozilla/5.0",
