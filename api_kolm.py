@@ -207,21 +207,6 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
     except Exception as e:
         return {"codStatus": 0, "descStatus": str(e), "qtdeRegistros": 0, "tabulacoes": []}
 
-@st.cache_data(ttl=600)
-def ler_base(uploaded_file):
-    if uploaded_file.name.endswith('.csv'):
-        try:
-            return pd.read_csv(uploaded_file, dtype=str, sep=';')
-        except Exception:
-            uploaded_file.seek(0)
-            return pd.read_csv(uploaded_file, dtype=str, sep=',')
-    else:
-        return pd.read_excel(uploaded_file, dtype=str)
-
-@st.cache_data(ttl=600)
-def obter_dados_sms_cached():
-    return obter_dados_sms()
-
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
@@ -247,7 +232,7 @@ def main():
     col1, col2 = st.columns(2)
     with col1:
         # --- PAINEL KOLMEYA ---
-        messages = obter_dados_sms_cached()
+        messages = obter_dados_sms()
         quantidade_sms = len(messages)
         investimento = quantidade_sms * CUSTO_POR_ENVIO
         telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
@@ -360,25 +345,26 @@ def main():
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
     if uploaded_file is not None:
         try:
-            df_base = ler_base(uploaded_file)
+            if uploaded_file.name.endswith(".csv"):
+                try:
+                    df_base = pd.read_csv(uploaded_file, dtype=str, sep=';')
+                except Exception:
+                    uploaded_file.seek(0)
+                    df_base = pd.read_csv(uploaded_file, dtype=str, sep=',')
+            else:
+                df_base = pd.read_excel(uploaded_file, dtype=str)
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
             return
-        # Detecta todas as colunas de telefone possíveis
-        colunas_telefone = [col for col in df_base.columns if col.strip().lower() in ['fone', 'fone2', 'celular', 'telefone']]
-        # Normaliza todos os telefones da base
-        for col in colunas_telefone:
-            df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
-        # Junta todos os telefones limpos da base
-        telefones_limpos_base = set()
-        for col in colunas_telefone:
-            telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
-        # Telefones dos SMS já limpos
+        df_base["FONE_LIMPO"] = df_base["FONE"].apply(limpar_telefone) if "FONE" in df_base.columns else ""
+        df_base["FONE2_LIMPO"] = df_base["FONE2"].apply(limpar_telefone) if "FONE2" in df_base.columns else ""
+        df_base["CELULAR_LIMPO"] = df_base["CELULAR"].apply(limpar_telefone) if "CELULAR" in df_base.columns else ""
         telefones_set = set(telefones)
-        # Cruzamento: cliente encontrado se qualquer telefone limpo da base estiver nos SMS
-        mask = pd.Series(False, index=df_base.index)
-        for col in colunas_telefone:
-            mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
+        mask = (
+            df_base["FONE_LIMPO"].isin(telefones_set) |
+            df_base["FONE2_LIMPO"].isin(telefones_set) |
+            df_base["CELULAR_LIMPO"].isin(telefones_set)
+        )
         clientes_encontrados = df_base[mask]
         st.markdown(f"""
         <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
