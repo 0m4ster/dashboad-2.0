@@ -175,6 +175,38 @@ def obter_propostas_facta(data_ini=None, data_fim=None, cpf=None, pagina=1, quan
             break
     return propostas
 
+def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, idGrupoUsuario=None, idUsuario=None, idLote=None, exibirUltTabulacao=True):
+    """
+    Consulta o endpoint de tabulações detalhadas da URA (Argus).
+    """
+    argus_token = os.environ.get('ARGUS_TOKEN', '')
+    url = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
+    headers = {
+        "Authorization": f"Bearer {argus_token}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "idCampanha": idCampanha,
+        "periodoInicial": periodoInicial,
+        "periodoFinal": periodoFinal,
+        "exibirUltTabulacao": exibirUltTabulacao
+    }
+    if idTabulacao is not None:
+        body["idTabulacao"] = idTabulacao
+    if idGrupoUsuario is not None:
+        body["idGrupoUsuario"] = idGrupoUsuario
+    if idUsuario is not None:
+        body["idUsuario"] = idUsuario
+    if idLote is not None:
+        body["idLote"] = idLote
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        return data
+    except Exception as e:
+        return {"codStatus": 0, "descStatus": str(e), "qtdeRegistros": 0, "tabulacoes": []}
+
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
@@ -197,65 +229,82 @@ def main():
         unsafe_allow_html=True
     )
 
-    # --- PAINEL KOLMEYA ---
-    messages = obter_dados_sms()
-    quantidade_sms = len(messages)
-    investimento = quantidade_sms * CUSTO_POR_ENVIO
-    telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
-    # st.write("Telefones extraídos dos SMS:", telefones)
-    cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
-    # st.write("CPFs extraídos dos SMS:", cpfs)
-    # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção
-    producao = sum(
-        float(m.get("valor_af", 0))
-        for m in messages
-        if m.get("averbador", "").strip().upper() == "FGTS" and m.get("valor_af") is not None
-    )
-    total_vendas = sum(
-        1 for m in messages
-        if m.get("averbador", "").strip().upper() == "FGTS"
-    )
-    previsao_faturamento = 0.0
-    ticket_medio = 0.0
-    roi = previsao_faturamento - investimento
+    col1, col2 = st.columns(2)
+    with col1:
+        # --- PAINEL KOLMEYA ---
+        messages = obter_dados_sms()
+        quantidade_sms = len(messages)
+        investimento = quantidade_sms * CUSTO_POR_ENVIO
+        telefones = [limpar_telefone(m.get("telefone")) for m in messages if m.get("telefone")]
+        cpfs = [str(m.get("cpf")).zfill(11) for m in messages if m.get("cpf")]
+        producao = sum(
+            float(m.get("valor_af", 0))
+            for m in messages
+            if m.get("averbador", "").strip().upper() == "FGTS" and m.get("valor_af") is not None
+        )
+        total_vendas = sum(
+            1 for m in messages
+            if m.get("averbador", "").strip().upper() == "FGTS"
+        )
+        previsao_faturamento = 0.0
+        ticket_medio = 0.0
+        roi = previsao_faturamento - investimento
 
-    st.markdown(f"""
-    <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
-        <h4 style='color:#fff; text-align:center;'>Kolmeya</h4>
-        <div style='display: flex; justify-content: space-between; margin-bottom: 12px;'>
-            <div style='text-align: center;'>
-                <div style='font-size: 1.1em; color: #e0d7f7;'>Quantidade de SMS</div>
-                <div style='font-size: 2em; font-weight: bold; color: #fff;'>{quantidade_sms}</div>
+        st.markdown(f"""
+        <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
+            <h4 style='color:#fff; text-align:center;'>Kolmeya</h4>
+            <div style='display: flex; justify-content: space-between; margin-bottom: 12px;'>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Quantidade de SMS</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{quantidade_sms:,d}</div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Custo por envio</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_ENVIO)}</div>
+                </div>
             </div>
-            <div style='text-align: center;'>
-                <div style='font-size: 1.1em; color: #e0d7f7;'>Custo por envio</div>
-                <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_ENVIO)}</div>
+            <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
+            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
+            <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #fff;'><b>Total de vendas</b></span>
+                    <span style='color: #fff;'>{total_vendas}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #fff;'><b>Produção</b></span>
+                    <span style='color: #fff;'>{formatar_real(producao)}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                    <span style='color: #fff;'><b>Previsão de faturamento</b></span>
+                    <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='color: #fff;'><b>Ticket médio</b></span>
+                    <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
+                </div>
             </div>
+            <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
+            <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(roi)}</div>
         </div>
-        <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
-        <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
-        <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
-            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                <span style='color: #fff;'><b>Total de vendas</b></span>
-                <span style='color: #fff;'>{total_vendas}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                <span style='color: #fff;'><b>Produção</b></span>
-                <span style='color: #fff;'>{formatar_real(producao)}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                <span style='color: #fff;'><b>Previsão de faturamento</b></span>
-                <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
-            </div>
-            <div style='display: flex; justify-content: space-between; align-items: center;'>
-                <span style='color: #fff;'><b>Ticket médio</b></span>
-                <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
-            </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("<h4 style='color:#fff; text-align:center;'>URA</h4>", unsafe_allow_html=True)
+        # Parâmetros configuráveis
+        idCampanha = st.number_input("ID da Campanha URA", min_value=1, value=1, step=1)
+        periodoInicial = st.date_input("Período inicial URA", value=(datetime.now() - timedelta(days=7))).strftime('%Y-%m-%dT00:00:00')
+        periodoFinal = st.date_input("Período final URA", value=datetime.now()).strftime('%Y-%m-%dT23:59:59')
+        dados_ura = obter_dados_ura(idCampanha, periodoInicial, periodoFinal)
+        qtde_registros = dados_ura.get("qtdeRegistros", 0)
+        investimento_ura = qtde_registros * 0.03  # Exemplo: R$ 0,03 por ligação
+        st.markdown(f'''
+        <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
+            <div style='font-size: 1.1em; color: #e0d7f7;'>Quantidade de URA</div>
+            <div style='font-size: 2em; font-weight: bold; color: #fff;'>{qtde_registros:,d}</div>
+            <div style='font-size: 1.1em; margin-top: 16px; color: #e0d7f7;'>Investimento</div>
+            <div style='font-size: 2em; font-weight: bold; color: #fff;'>R$ {investimento_ura:,.2f}</div>
         </div>
-        <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
-        <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(roi)}</div>
-    </div>
-    """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
     # --- UPLOAD DE BASE LOCAL ---
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
