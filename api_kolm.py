@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import re
 import pandas as pd  # Adiciona pandas para compatibilidade com exemplo
 import io
+import gc
 try:
     from streamlit_extras.streamlit_autorefresh import st_autorefresh
     HAS_AUTOREFRESH = True
@@ -118,7 +119,16 @@ def obter_dados_sms():
 def limpar_telefone(telefone):
     if not telefone:
         return ""
-    return re.sub(r"\D", "", str(telefone)) 
+    t = re.sub(r'\D', '', str(telefone))
+    # Remove zeros à esquerda
+    t = t.lstrip('0')
+    # Se for celular sem DDD, adiciona DDD padrão (opcional, ex: 11)
+    if len(t) == 8 or len(t) == 9:
+        t = '11' + t  # Ajuste conforme seu DDD padrão
+    # Se for telefone fixo sem DDD (8 dígitos), adiciona DDD padrão
+    if len(t) == 10 or len(t) == 11:
+        return t[-11:]  # Mantém apenas os 11 últimos dígitos (DDD+celular)
+    return t
 
 # Função utilitária para formatar valores em Real
 
@@ -345,26 +355,21 @@ def main():
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
     if uploaded_file is not None:
         try:
-            if uploaded_file.name.endswith(".csv"):
-                try:
-                    df_base = pd.read_csv(uploaded_file, dtype=str, sep=';')
-                except Exception:
-                    uploaded_file.seek(0)
-                    df_base = pd.read_csv(uploaded_file, dtype=str, sep=',')
-            else:
-                df_base = pd.read_excel(uploaded_file, dtype=str)
+            df_base = ler_base(uploaded_file)
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
             return
-        df_base["FONE_LIMPO"] = df_base["FONE"].apply(limpar_telefone) if "FONE" in df_base.columns else ""
-        df_base["FONE2_LIMPO"] = df_base["FONE2"].apply(limpar_telefone) if "FONE2" in df_base.columns else ""
-        df_base["CELULAR_LIMPO"] = df_base["CELULAR"].apply(limpar_telefone) if "CELULAR" in df_base.columns else ""
-        telefones_set = set(telefones)
-        mask = (
-            df_base["FONE_LIMPO"].isin(telefones_set) |
-            df_base["FONE2_LIMPO"].isin(telefones_set) |
-            df_base["CELULAR_LIMPO"].isin(telefones_set)
-        )
+        colunas_telefone = [col for col in df_base.columns if col.strip().lower() in ['fone', 'fone2', 'celular', 'telefone']]
+        for col in colunas_telefone:
+            df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
+        telefones_limpos_base = set()
+        for col in colunas_telefone:
+            telefones_limpos_base.update(df_base[f"{col}_LIMPO"].dropna().unique())
+        # Telefones dos SMS já limpos e padronizados
+        telefones_set = set(limpar_telefone(t) for t in telefones if t)
+        mask = pd.Series(False, index=df_base.index)
+        for col in colunas_telefone:
+            mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
         clientes_encontrados = df_base[mask]
         st.markdown(f"""
         <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
@@ -387,6 +392,12 @@ def main():
                     propostas_facta.extend(obter_propostas_facta(cpf=cpf))
                 st.markdown(f"<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'><b>Quantidade de propostas consultadas na Facta:</b> <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_facta)}</span></div>", unsafe_allow_html=True)
                 st.dataframe(pd.DataFrame(propostas_facta))
+                # Libera memória após uso
+                del propostas_facta
+                gc.collect()
+        # Libera memória dos DataFrames grandes após uso
+        del df_base, clientes_encontrados, mask
+        gc.collect()
 
 if __name__ == "__main__":
     main()
