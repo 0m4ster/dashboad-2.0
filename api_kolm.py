@@ -42,8 +42,7 @@ def get_today_range():
 
 def obter_dados_sms():
     """
-    Busca os dados de SMS do Kolmeya da semana atual, dividindo cada dia em blocos de 1 hora (e, se necessário, em blocos de 15 minutos),
-    para respeitar o limite de 30.000 registros por requisição. Só busca blocos até o horário atual, nunca datas futuras.
+    Busca os dados de SMS do Kolmeya sem filtrar por datas, apenas pelo limite de registros por requisição.
     """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
@@ -51,69 +50,17 @@ def obter_dados_sms():
         "Content-Type": "application/json"
     }
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
-    now = datetime.now()
-    start_of_week = now - timedelta(days=now.weekday())
     all_messages = []
-
-    for i in range(7):
-        dia = start_of_week + timedelta(days=i)
-        dia_inicio = dia.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Não busca dias no futuro
-        if dia_inicio > now:
-            break
-        if i == 6:
-            dia_fim = min(now - timedelta(minutes=1), dia.replace(hour=23, minute=59, second=0, microsecond=0))
-        else:
-            dia_fim = dia.replace(hour=23, minute=59, second=0, microsecond=0)
-        if dia_fim > now:
-            dia_fim = now - timedelta(minutes=1)
-        bloco_inicio = dia_inicio
-        while bloco_inicio < dia_fim:
-            bloco_fim = min(bloco_inicio + timedelta(hours=1), dia_fim)
-            # Não busca blocos no futuro
-            if bloco_inicio >= now:
-                break
-            if bloco_fim > now:
-                bloco_fim = now - timedelta(minutes=1)
-                if bloco_fim <= bloco_inicio:
-                    break
-            body = {
-                "start_at": bloco_inicio.strftime('%Y-%m-%d %H:%M'),
-                "end_at": bloco_fim.strftime('%Y-%m-%d %H:%M'),
-                "limit": 30000
-            }
-            try:
-                resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
-                resp.raise_for_status()
-                messages = resp.json().get("messages", [])
-                all_messages.extend(messages)
-                # Se vier exatamente 30.000, pode haver mais registros nesse intervalo, então divide em blocos menores
-                if len(messages) == 30000:
-                    # Divide o bloco em intervalos de 15 minutos
-                    sub_inicio = bloco_inicio
-                    while sub_inicio < bloco_fim:
-                        sub_fim = min(sub_inicio + timedelta(minutes=15), bloco_fim)
-                        if sub_inicio >= now:
-                            break
-                        if sub_fim > now:
-                            sub_fim = now - timedelta(minutes=1)
-                            if sub_fim <= sub_inicio:
-                                break
-                        sub_body = {
-                            "start_at": sub_inicio.strftime('%Y-%m-%d %H:%M'),
-                            "end_at": sub_fim.strftime('%Y-%m-%d %H:%M'),
-                            "limit": 30000
-                        }
-                        sub_resp = requests.post(API_URL, headers=headers, json=sub_body, timeout=20)
-                        sub_resp.raise_for_status()
-                        sub_messages = sub_resp.json().get("messages", [])
-                        all_messages.extend(sub_messages)
-                        sub_inicio = sub_fim
-                bloco_inicio = bloco_fim
-            except Exception as e:
-                # st.error(f"Erro ao buscar dados da API Kolmeya para o intervalo {bloco_inicio} - {bloco_fim}: {e}")
-                bloco_inicio = bloco_fim  # Evita loop infinito em caso de erro
-    # st.write("Mensagens mais recentes do Kolmeya:", all_messages)
+    body = {
+        "limit": 30000
+    }
+    try:
+        resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+        resp.raise_for_status()
+        messages = resp.json().get("messages", [])
+        all_messages.extend(messages)
+    except Exception as e:
+        pass  # Você pode adicionar um st.error ou print para depuração
     return all_messages
 
 def limpar_telefone(telefone):
@@ -217,6 +164,29 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
     except Exception as e:
         return {"codStatus": 0, "descStatus": str(e), "qtdeRegistros": 0, "tabulacoes": []}
 
+def obter_resumo_jobs(periodo=None):
+    """
+    Consulta o endpoint de resumo dos jobs enviados por um período específico (formato Y-m).
+    """
+    token = os.environ.get("KOLMEYA_TOKEN")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    API_URL = "https://kolmeya.com.br/api/v1/sms/reports/quantity-jobs"
+    if periodo is None:
+        periodo = datetime.now().strftime('%Y-%m')
+    body = {"period": periodo}
+    try:
+        resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+        print("Status:", resp.status_code)
+        print("Resposta:", resp.text)
+        resp.raise_for_status()
+        return resp.json().get("jobs", [])
+    except Exception as e:
+        print("Erro ao consultar jobs:", e)
+        return []
+
 @st.cache_data(ttl=600)
 def ler_base(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -262,7 +232,6 @@ def main():
             tel = m.get('telefone') if isinstance(m, dict) else None
             if tel:
                 telefones.append(limpar_telefone(tel))
-        st.write('Debug - Telefones extraídos dos SMS:', telefones[:10])
         cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
         producao = sum(
             float(m.get("valor_af", 0))
@@ -276,6 +245,15 @@ def main():
         previsao_faturamento = 0.0
         ticket_medio = 0.0
         roi = previsao_faturamento - investimento
+
+        # --- RESUMO DOS JOBS ---
+        st.markdown("<h4 style='color:#fff; text-align:center;'>Resumo dos Jobs (Mês Atual)</h4>", unsafe_allow_html=True)
+        periodo_atual = datetime.now().strftime('%Y-%m')
+        resumo_jobs = obter_resumo_jobs(periodo=periodo_atual)
+        if resumo_jobs:
+            st.dataframe(pd.DataFrame(resumo_jobs))
+        else:
+            st.info("Nenhum job encontrado para o mês atual.")
 
         st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
@@ -403,9 +381,9 @@ def main():
         mask = pd.Series(False, index=df_base.index)
         for col in colunas_telefone:
             if col.lower().endswith('_limpo'):
-                mask = mask | df_base[col].isin(telefones_set)
+                mask = mask | df_base[col].isin(list(telefones_set))
             else:
-                mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
+                mask = mask | df_base[f"{col}_LIMPO"].isin(list(telefones_set))
         clientes_encontrados = df_base[mask]
         st.markdown(f"""
         <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
@@ -421,7 +399,7 @@ def main():
             mime="text/csv"
         )
         if "CPF" in clientes_encontrados.columns:
-            cpfs_encontrados = clientes_encontrados["CPF"].dropna().unique().tolist()
+            cpfs_encontrados = pd.Series(clientes_encontrados["CPF"]).dropna().unique().tolist()
             if st.button("Consultar propostas na Facta por CPF encontrado"):
                 propostas_facta = []
                 for cpf in cpfs_encontrados:
