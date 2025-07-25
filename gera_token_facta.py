@@ -25,6 +25,8 @@ while True:
         if not data.get("erro") and "token" in data:
             print("\nToken gerado com sucesso:")
             print(data["token"])
+            with open("facta_token.txt", "w") as f:
+                f.write(data["token"])
         else:
             print("\nNão foi possível gerar o token. Mensagem:", data.get("mensagem"))
     except Exception as e:

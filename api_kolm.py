@@ -1,11 +1,12 @@
 import os
 import requests
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import re
 import pandas as pd  # Adiciona pandas para compatibilidade com exemplo
 import io
 import gc
+import json
 try:
     from streamlit_extras.streamlit_autorefresh import st_autorefresh
     HAS_AUTOREFRESH = True
@@ -14,6 +15,7 @@ except ImportError:
 import httpx  # Adicionado para garantir uso do httpx
 import ssl
 print("OpenSSL version:", ssl.OPENSSL_VERSION)
+import concurrent.futures
 
 API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -21,26 +23,22 @@ CUSTO_POR_LIGACAO_URA = 0.034444  # R$ 0,034444 por ligação URA
 
 # Função para buscar SMS FGTS
 
-def get_week_range():
-    hoje = datetime.now()
-    start_of_week = hoje - timedelta(days=hoje.weekday())  # Segunda-feira
+def get_week_range(now):
+    start_of_week = now - timedelta(days=now.weekday())  # Segunda-feira
     start_at = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_week = start_of_week + timedelta(days=6)
     end_at = end_of_week.replace(hour=23, minute=59, second=59, microsecond=999999)
-    now = datetime.now()
     if end_at > now:
         end_at = now
     return start_at, end_at
 
-def get_today_range():
-    hoje = datetime.now()
-    start_at = hoje.replace(hour=0, minute=0, second=0, microsecond=0)
-    now = datetime.now()
-    end_of_day = hoje.replace(hour=23, minute=59, second=0, microsecond=0)
+def get_today_range(now):
+    start_at = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = now.replace(hour=23, minute=59, second=0, microsecond=0)
     end_at = min(end_of_day, now)
     return start_at, end_at
 
-def obter_dados_sms():
+def obter_dados_sms(now):
     """
     Busca os dados de SMS do Kolmeya da semana atual, dividindo cada dia em blocos de 1 hora (e, se necessário, em blocos de 15 minutos),
     para respeitar o limite de 30.000 registros por requisição. Só busca blocos até o horário atual, nunca datas futuras.
@@ -51,7 +49,6 @@ def obter_dados_sms():
         "Content-Type": "application/json"
     }
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
-    now = datetime.now()
     start_of_week = now - timedelta(days=now.weekday())
     all_messages = []
 
@@ -111,9 +108,7 @@ def obter_dados_sms():
                         sub_inicio = sub_fim
                 bloco_inicio = bloco_fim
             except Exception as e:
-                # st.error(f"Erro ao buscar dados da API Kolmeya para o intervalo {bloco_inicio} - {bloco_fim}: {e}")
                 bloco_inicio = bloco_fim  # Evita loop infinito em caso de erro
-    # st.write("Mensagens mais recentes do Kolmeya:", all_messages)
     return all_messages
 
 def limpar_telefone(telefone):
@@ -135,11 +130,21 @@ def limpar_telefone(telefone):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
-def obter_propostas_facta(data_ini=None, data_fim=None, cpf=None, pagina=1, quantidade=5000, phpsessid=None):
+def obter_propostas_facta(
+    data_ini=None, data_fim=None, cpf=None, pagina=1, quantidade=5000, phpsessid=None,
+    convenio=None, averbador=None, af=None, consulta_sub=None, codigo_sub=None,
+    data_alteracao_ini=None, data_alteracao_fim=None
+):
     """
     Consulta o endpoint andamento-propostas da Facta, paginando até trazer todos os resultados do período.
+    Permite busca por vários parâmetros, inclusive grandes volumes.
     """
-    facta_token = os.environ.get('FACTA_TOKEN', '')
+    # Tenta ler o token do arquivo salvo pelo gera_token_facta.py
+    try:
+        with open("facta_token.txt") as f:
+            facta_token = f.read().strip()
+    except Exception:
+        facta_token = os.environ.get('FACTA_TOKEN', '')
     if phpsessid is None:
         phpsessid = os.environ.get('FACTA_PHPSESSID', None)
     facta_env = os.environ.get('FACTA_ENV', 'prod').lower()
@@ -154,11 +159,11 @@ def obter_propostas_facta(data_ini=None, data_fim=None, cpf=None, pagina=1, quan
     }
     cookies = {"PHPSESSID": phpsessid} if phpsessid else None
 
-    # Datas padrão: últimos 7 dias
+    # Datas padrão: últimos 30 dias
     if not data_fim:
         data_fim = datetime.now().strftime('%d/%m/%Y')
     if not data_ini:
-        data_ini = (datetime.now() - timedelta(days=7)).strftime('%d/%m/%Y')
+        data_ini = (datetime.now() - timedelta(days=30)).strftime('%d/%m/%Y')
 
     propostas = []
     while True:
@@ -170,8 +175,23 @@ def obter_propostas_facta(data_ini=None, data_fim=None, cpf=None, pagina=1, quan
         }
         if cpf:
             params["cpf"] = cpf
+        if convenio:
+            params["convenio"] = convenio
+        if averbador:
+            params["averbador"] = averbador
+        if af:
+            params["af"] = af
+        if consulta_sub:
+            params["consulta_sub"] = consulta_sub
+        if codigo_sub:
+            params["codigo_sub"] = codigo_sub
+        if data_alteracao_ini:
+            params["data_alteracao_ini"] = data_alteracao_ini
+        if data_alteracao_fim:
+            params["data_alteracao_fim"] = data_alteracao_fim
+
         try:
-            resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=30)
+            resp = requests.get(url_base, headers=headers, cookies=cookies, params=params, timeout=60)
             resp.raise_for_status()
             data = resp.json()
             if data.get("erro"):
@@ -182,8 +202,18 @@ def obter_propostas_facta(data_ini=None, data_fim=None, cpf=None, pagina=1, quan
                 break
             pagina += 1
         except Exception as e:
+            print(f"Erro na consulta Facta: {e}")
             break
     return propostas
+
+def gerar_blocos_datas(data_ini, data_fim, dias_bloco=30):
+    blocos = []
+    atual = data_ini
+    while atual <= data_fim:
+        proximo = min(atual + timedelta(days=dias_bloco-1), data_fim)
+        blocos.append((atual, proximo))
+        atual = proximo + timedelta(days=1)
+    return blocos
 
 def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, idGrupoUsuario=None, idUsuario=None, idLote=None, exibirUltTabulacao=True):
     """
@@ -228,13 +258,38 @@ def ler_base(uploaded_file):
     else:
         return pd.read_excel(uploaded_file, dtype=str)
 
+# Função para consultar o resumo dos jobs do Kolmeya
+
+def obter_resumo_jobs_kolmeya(period, token=None):
+    """
+    Consulta o endpoint de resumo dos jobs enviados por período (YYYY-MM) do Kolmeya.
+    """
+    import requests
+    API_URL = "https://kolmeya.com.br/api/v1/sms/reports/quantity-jobs"
+    if token is None:
+        token = os.environ.get("KOLMEYA_TOKEN", "")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    body = {"period": period}
+    try:
+        resp = requests.post(API_URL, headers=headers, json=body, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        return {"erro": str(e)}
+
 def main():
+    fixed_now = datetime.now()
+    leads_gerados = st.session_state.get('leads_gerados', 0)  # Pega valor salvo, padrão 0
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
         st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")  # Atualiza a cada 2 minutos
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
-    start_at, end_at = get_today_range()
+    start_at, end_at = get_today_range(fixed_now)
 
     st.markdown(
         """
@@ -251,30 +306,29 @@ def main():
     )
 
     col1, col2 = st.columns(2)
+    # Garante que os valores de produção e vendas da Facta estejam sempre disponíveis no session_state
+    if "producao_facta" not in st.session_state:
+        st.session_state["producao_facta"] = 0.0
+    if "total_vendas_facta" not in st.session_state:
+        st.session_state["total_vendas_facta"] = 0
     with col1:
         # --- PAINEL KOLMEYA ---
-        messages = obter_dados_sms()
+        messages = obter_dados_sms(fixed_now)
         quantidade_sms = len(messages)
         investimento = quantidade_sms * CUSTO_POR_ENVIO
-        # CORRIGIDO: Garante que só pega o campo 'telefone' de cada mensagem
         telefones = []
         for m in messages:
             tel = m.get('telefone') if isinstance(m, dict) else None
             if tel:
                 telefones.append(limpar_telefone(tel))
-        st.write('Debug - Telefones extraídos dos SMS:', telefones[:10])
         cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
-        producao = sum(
-            float(m.get("valor_af", 0))
-            for m in messages
-            if m.get("averbador", "").strip().upper() == "FGTS" and m.get("valor_af") is not None
-        )
-        total_vendas = sum(
-            1 for m in messages
-            if m.get("averbador", "").strip().upper() == "FGTS"
-        )
-        previsao_faturamento = 0.0
-        ticket_medio = 0.0
+        # Produção e vendas vindos da Facta, se já consultados
+        producao = st.session_state["producao_facta"]
+        total_vendas = st.session_state["total_vendas_facta"]
+        # Previsão de faturamento = produção * 0,171
+        previsao_faturamento = producao * 0.171
+        # Ticket médio = produção / total de vendas
+        ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
         roi = previsao_faturamento - investimento
 
         st.markdown(f"""
@@ -305,9 +359,13 @@ def main():
                     <span style='color: #fff;'><b>Previsão de faturamento</b></span>
                     <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
                 </div>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
                     <span style='color: #fff;'><b>Ticket médio</b></span>
                     <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='color: #fff;'><b>Leads gerados</b></span>
+                    <span style='color: #fff;'>{leads_gerados}</span>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
@@ -319,8 +377,8 @@ def main():
         # --- PAINEL URA ---
         CUSTO_POR_LIGACAO_URA = 0.034444
         idCampanha = 1  # Fixo
-        periodoInicial = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%dT00:00:00')
-        periodoFinal = datetime.now().strftime('%Y-%m-%dT23:59:59')
+        periodoInicial = (fixed_now - timedelta(days=7)).strftime('%Y-%m-%dT00:00:00')
+        periodoFinal = fixed_now.strftime('%Y-%m-%dT23:59:59')
         dados_ura = obter_dados_ura(idCampanha, periodoInicial, periodoFinal)
         quantidade_ura = dados_ura.get("qtdeRegistros", 0)
         investimento_ura = quantidade_ura * CUSTO_POR_LIGACAO_URA
@@ -373,67 +431,51 @@ def main():
     if uploaded_file is not None:
         try:
             df_base = ler_base(uploaded_file)
+            st.markdown("<b>Base carregada:</b>", unsafe_allow_html=True)
+            st.dataframe(df_base)
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
-            return
-        # Inclui colunas de telefone padrão e também as que já terminam com _LIMPO
-        colunas_telefone = [col for col in df_base.columns if col.strip().lower() in ['fone', 'fone2', 'celular', 'telefone'] or col.strip().lower().endswith('_limpo')]
-        # Só limpa as colunas que ainda não estão limpas
-        for col in colunas_telefone:
-            if not col.lower().endswith('_limpo'):
-                df_base[f"{col}_LIMPO"] = df_base[col].apply(limpar_telefone)
-        # Função auxiliar para validar telefones
-        def is_telefone_valido(t):
-            return isinstance(t, str) and t.isdigit() and 10 <= len(t) <= 11
 
-        telefones_limpos_base = set()
-        for col in colunas_telefone:
-            if col.lower().endswith('_limpo'):
-                telefones_col = df_base[col].dropna().unique()
-            else:
-                telefones_col = df_base[f"{col}_LIMPO"].dropna().unique()
-            # Só adiciona se for número de telefone válido
-            telefones_limpos_base.update([t for t in telefones_col if is_telefone_valido(t)])
-        # Telefones dos SMS já limpos e padronizados
-        telefones_set = set([t for t in telefones if is_telefone_valido(t)])
-        # DEBUG VISUAL
-        st.write("Colunas detectadas:", df_base.columns.tolist())
-        st.write("Exemplo telefones base local (válidos):", list(telefones_limpos_base)[:10])
-        st.write("Exemplo telefones SMS (válidos):", list(telefones_set)[:10])
-        mask = pd.Series(False, index=df_base.index)
-        for col in colunas_telefone:
-            if col.lower().endswith('_limpo'):
-                mask = mask | df_base[col].isin(telefones_set)
-            else:
-                mask = mask | df_base[f"{col}_LIMPO"].isin(telefones_set)
-        clientes_encontrados = df_base[mask]
-        st.markdown(f"""
-        <div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'>
-            <b>Quantidade de clientes encontrados na base local com telefone nos SMS:</b>
-            <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(clientes_encontrados)}</span><br>
-        </div>
-        """, unsafe_allow_html=True)
-        csv = clientes_encontrados.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Baixar resultado cruzado (.csv)",
-            data=csv,
-            file_name="clientes_encontrados.csv",
-            mime="text/csv"
-        )
-        if "CPF" in clientes_encontrados.columns:
-            cpfs_encontrados = clientes_encontrados["CPF"].dropna().unique().tolist()
-            if st.button("Consultar propostas na Facta por CPF encontrado"):
-                propostas_facta = []
-                for cpf in cpfs_encontrados:
-                    propostas_facta.extend(obter_propostas_facta(cpf=cpf))
-                st.markdown(f"<div style='background: #2a1a40; border-radius: 10px; padding: 12px; margin-bottom: 16px;'><b>Quantidade de propostas consultadas na Facta:</b> <span style='font-size: 1.2em; color: #e0d7f7; font-weight: bold;'>{len(propostas_facta)}</span></div>", unsafe_allow_html=True)
-                st.dataframe(pd.DataFrame(propostas_facta))
-                # Libera memória após uso
-                del propostas_facta
-                gc.collect()
-        # Libera memória dos DataFrames grandes após uso
-        del df_base, clientes_encontrados, mask
-        gc.collect()
+    # --- RESUMO DOS JOBS KOLMEYA ---
+    st.markdown("<h3>Resumo dos Jobs Kolmeya</h3>", unsafe_allow_html=True)
+    col_period, col_token = st.columns([1,2])
+    with col_period:
+        period = st.text_input("Período (YYYY-MM)", value=datetime.now().strftime("%Y-%m"))
+    with col_token:
+        token_input = st.text_input("Token Kolmeya (opcional, usa env se vazio)", value="", type="password")
+    if st.button("Consultar resumo dos jobs Kolmeya"):
+        resultado_jobs = obter_resumo_jobs_kolmeya(period, token=token_input or None)
+        leads_gerados = 0
+        if isinstance(resultado_jobs, dict) and "erro" in resultado_jobs:
+            st.error(f"Erro ao consultar jobs: {resultado_jobs['erro']}")
+        elif isinstance(resultado_jobs, list) and resultado_jobs:
+            df_jobs = pd.DataFrame(resultado_jobs)
+            if 'centro_custo' in df_jobs.columns:
+                df_jobs = df_jobs[df_jobs['centro_custo'] == 'FGTS']
+            st.dataframe(df_jobs)
+            if 'acessos' in df_jobs.columns:
+                try:
+                    leads_gerados = df_jobs['acessos'].astype(int).sum()
+                except Exception:
+                    leads_gerados = 0
+        elif isinstance(resultado_jobs, dict) and resultado_jobs:
+            df_jobs = pd.DataFrame([resultado_jobs])
+            if 'centro_custo' in df_jobs.columns:
+                df_jobs = df_jobs[df_jobs['centro_custo'] == 'FGTS']
+            st.dataframe(df_jobs)
+            if 'acessos' in df_jobs.columns:
+                try:
+                    leads_gerados = df_jobs['acessos'].astype(int).sum()
+                except Exception:
+                    leads_gerados = 0
+        else:
+            st.info("Nenhum dado retornado para o período informado.")
+        st.session_state['leads_gerados'] = leads_gerados  # Salva para uso no painel Kolmeya
+    # Exibir leads_gerados no painel Kolmeya
+    # (Abaixo, ajuste a linha do painel Kolmeya para usar a variável leads_gerados)
+
+    # Libera memória dos DataFrames grandes após uso
+    gc.collect()
 
 if __name__ == "__main__":
     main()
