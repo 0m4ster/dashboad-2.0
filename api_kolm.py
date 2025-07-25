@@ -114,15 +114,10 @@ def limpar_telefone(telefone):
     if not telefone:
         return ""
     t = re.sub(r'\D', '', str(telefone))
-    # Remove zeros à esquerda
-    t = t.lstrip('0')
-    # Se for celular sem DDD, adiciona DDD padrão (opcional, ex: 11)
-    if len(t) == 8 or len(t) == 9:
-        t = '11' + t  # Ajuste conforme seu DDD padrão
-    # Se for telefone fixo sem DDD (8 dígitos), adiciona DDD padrão
-    if len(t) == 10 or len(t) == 11:
-        return t[-11:]  # Mantém apenas os 11 últimos dígitos (DDD+celular)
-    return t
+    # Mantém apenas os 11 últimos dígitos (ignora DDI, zeros à esquerda, etc)
+    if len(t) >= 11:
+        return t[-11:]
+    return ""
 
 # Função utilitária para formatar valores em Real
 
@@ -305,7 +300,8 @@ def obter_resumo_jobs_kolmeya(period, token=None):
 
 def main():
     fixed_now = datetime.now()
-    leads_gerados = st.session_state.get('leads_gerados', 0)  # Pega valor salvo, padrão 0
+    # --- Calcular leads_gerados automaticamente com jobs do mês atual ---
+    # (Removido: cálculo de leads_gerados do início do main para evitar sobrescrita)
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
         st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")  # Atualiza a cada 2 minutos
@@ -344,6 +340,16 @@ def main():
             if tel:
                 telefones.append(limpar_telefone(tel))
         cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
+        # --- NOVOS NA CARTEIRA ---
+        # Buscar CPFs da semana anterior
+        semana_atual_ini = fixed_now - timedelta(days=fixed_now.weekday())
+        semana_anterior_ini = semana_atual_ini - timedelta(days=7)
+        semana_anterior_fim = semana_atual_ini - timedelta(seconds=1)
+        # Busca SMS da semana anterior
+        messages_semana_anterior = obter_dados_sms(semana_anterior_fim)
+        cpfs_semana_anterior = set(str(m.get("cpf")).zfill(11) for m in messages_semana_anterior if isinstance(m, dict) and m.get("cpf"))
+        cpfs_semana_atual = set(cpfs)
+        novos_na_carteira = len(cpfs_semana_atual - cpfs_semana_anterior)
         # Produção e vendas vindos da Facta, se já consultados
         producao = st.session_state["producao_facta"]
         total_vendas = st.session_state["total_vendas_facta"]
@@ -352,7 +358,7 @@ def main():
         # Ticket médio = produção / total de vendas
         ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
         roi = previsao_faturamento - investimento
-
+        leads_gerados = st.session_state.get('leads_gerados', 0)
         st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
             <h4 style='color:#fff; text-align:center;'>Kolmeya</h4>
@@ -388,6 +394,10 @@ def main():
                 <div style='display: flex; justify-content: space-between; align-items: center;'>
                     <span style='color: #fff;'><b>Leads gerados</b></span>
                     <span style='color: #fff;'>{leads_gerados}</span>
+                </div>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <span style='color: #fff;'><b>Novos na carteira</b></span>
+                    <span style='color: #fff;'>{novos_na_carteira}</span>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
@@ -448,6 +458,14 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
+    # --- BUSCAR TELEFONES DOS JOBS EM AMBOS ---
+    telefones_em_ambos = set()  # Garante que sempre existe
+    jobs_em_ambos = set()
+    if messages and jobs_em_ambos:
+        df_status = pd.DataFrame(messages)
+        if 'job' in df_status.columns and 'telefone' in df_status.columns:
+            mask = df_status['job'].apply(lambda x: int(x) if pd.notnull(x) and str(x).isdigit() else None).isin(jobs_em_ambos)
+            telefones_em_ambos = set(df_status.loc[mask, 'telefone'].dropna().astype(str))
     # --- UPLOAD DE BASE LOCAL ---
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
     if uploaded_file is not None:
@@ -455,46 +473,55 @@ def main():
             df_base = ler_base(uploaded_file)
             st.markdown("<b>Base carregada:</b>", unsafe_allow_html=True)
             st.dataframe(df_base)
+            # --- COMPARAÇÃO DE TELEFONES DA BASE COM O RELATÓRIO DE STATUS ---
+            # Buscar todos os telefones do relatório de status
+            messages_status = obter_dados_sms(fixed_now)
+            telefones_status = set()
+            if messages_status:
+                df_status = pd.DataFrame(messages_status)
+                col_telefone_status = next((col for col in df_status.columns if col.lower() == 'telefone' or 'tel' in col.lower()), None)
+                if col_telefone_status:
+                    telefones_status = set(df_status[col_telefone_status].dropna().astype(str).map(limpar_telefone))
+            # Padronizar telefones da base
+            telefones_base = set()
+            if 'Telefone' in df_base.columns:
+                telefones_base = set(df_base['Telefone'].dropna().astype(str).map(limpar_telefone))
+            # Comparar
+            telefones_iguais = telefones_base & telefones_status
+            st.markdown(f"<b>Total de telefones da base que aparecem no relatório de status:</b> <span style='color:#e0d7f7;font-weight:bold;'>{len(telefones_iguais)}</span>", unsafe_allow_html=True)
+            # --- FIM COMPARAÇÃO ---
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
 
     # --- RESUMO DOS JOBS KOLMEYA ---
     st.markdown("<h3>Resumo dos Jobs Kolmeya</h3>", unsafe_allow_html=True)
+    st.info("A busca retorna todos os jobs do mês selecionado. O filtro por data é aplicado localmente.")
     col_period, col_token = st.columns([1,2])
     with col_period:
-        period = st.text_input("Período (YYYY-MM)", value=datetime.now().strftime("%Y-%m"))
+        data_ini = st.date_input("Data inicial", value=datetime.now().replace(day=1).date(), key="data_ini")
+        data_fim = st.date_input("Data final", value=datetime.now().date(), key="data_fim")
     with col_token:
         token_input = st.text_input("Token Kolmeya (opcional, usa env se vazio)", value="", type="password")
-    if st.button("Consultar resumo dos jobs Kolmeya"):
-        resultado_jobs = obter_resumo_jobs_kolmeya(period, token=token_input or None)
-        leads_gerados = 0
-        if isinstance(resultado_jobs, dict) and "erro" in resultado_jobs:
-            st.error(f"Erro ao consultar jobs: {resultado_jobs['erro']}")
-        elif isinstance(resultado_jobs, list) and resultado_jobs:
-            df_jobs = pd.DataFrame(resultado_jobs)
-            if 'centro_custo' in df_jobs.columns:
-                df_jobs = df_jobs[df_jobs['centro_custo'] == 'FGTS']
-            st.dataframe(df_jobs)
-            if 'acessos' in df_jobs.columns:
-                try:
-                    leads_gerados = df_jobs['acessos'].astype(int).sum()
-                except Exception:
-                    leads_gerados = 0
-        elif isinstance(resultado_jobs, dict) and resultado_jobs:
-            df_jobs = pd.DataFrame([resultado_jobs])
-            if 'centro_custo' in df_jobs.columns:
-                df_jobs = df_jobs[df_jobs['centro_custo'] == 'FGTS']
-            st.dataframe(df_jobs)
-            if 'acessos' in df_jobs.columns:
-                try:
-                    leads_gerados = df_jobs['acessos'].astype(int).sum()
-                except Exception:
-                    leads_gerados = 0
-        else:
-            st.info("Nenhum dado retornado para o período informado.")
-        st.session_state['leads_gerados'] = leads_gerados  # Salva para uso no painel Kolmeya
-    # Exibir leads_gerados no painel Kolmeya
-    # (Abaixo, ajuste a linha do painel Kolmeya para usar a variável leads_gerados)
+
+    periodo = data_ini.strftime('%Y-%m')
+    resultado_jobs = obter_resumo_jobs_kolmeya(periodo, token=token_input or None)
+    df_jobs = pd.DataFrame(resultado_jobs) if isinstance(resultado_jobs, list) else pd.DataFrame([resultado_jobs])
+    if 'centro_custo' in df_jobs.columns:
+        df_jobs = df_jobs[df_jobs['centro_custo'] == 'FGTS']
+    if 'data_hora_inicio' in df_jobs.columns:
+        df_jobs['data_hora_inicio'] = pd.to_datetime(df_jobs['data_hora_inicio'], errors='coerce')
+        mask = (df_jobs['data_hora_inicio'].dt.date >= data_ini) & (df_jobs['data_hora_inicio'].dt.date <= data_fim)
+        df_jobs = df_jobs[mask]
+    # Calcule leads_gerados exatamente sobre o DataFrame filtrado
+    leads_gerados = pd.to_numeric(df_jobs['acessos'], errors='coerce').fillna(0).astype(int).sum() if 'acessos' in df_jobs.columns else 0
+    st.dataframe(df_jobs)
+    st.session_state['leads_gerados'] = leads_gerados
+
+    # --- COMPARAÇÃO ENTRE JOBS DO RESUMO E DO RELATÓRIO DE STATUS ---
+    # (Removido: não faz mais comparação de jobs)
+    # --- BUSCAR TELEFONES DOS JOBS EM AMBOS ---
+    # (Removido: não faz mais exibição de telefones dos jobs em ambos)
+    # --- FIM BUSCA TELEFONES ---
 
     # Libera memória dos DataFrames grandes após uso
     gc.collect()
