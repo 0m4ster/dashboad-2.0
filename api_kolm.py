@@ -40,8 +40,7 @@ def get_today_range(now):
 
 def obter_dados_sms(now):
     """
-    Busca os dados de SMS do Kolmeya da semana atual, dividindo cada dia em blocos de 1 hora (e, se necessário, em blocos de 15 minutos),
-    para respeitar o limite de 30.000 registros por requisição. Só busca blocos até o horário atual, nunca datas futuras.
+    Busca os dados de SMS do Kolmeya sem filtrar por datas, apenas pelo limite de registros por requisição.
     """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
@@ -247,6 +246,29 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
     except Exception as e:
         return {"codStatus": 0, "descStatus": str(e), "qtdeRegistros": 0, "tabulacoes": []}
 
+def obter_resumo_jobs(periodo=None):
+    """
+    Consulta o endpoint de resumo dos jobs enviados por um período específico (formato Y-m).
+    """
+    token = os.environ.get("KOLMEYA_TOKEN")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    API_URL = "https://kolmeya.com.br/api/v1/sms/reports/quantity-jobs"
+    if periodo is None:
+        periodo = datetime.now().strftime('%Y-%m')
+    body = {"period": periodo}
+    try:
+        resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+        print("Status:", resp.status_code)
+        print("Resposta:", resp.text)
+        resp.raise_for_status()
+        return resp.json().get("jobs", [])
+    except Exception as e:
+        print("Erro ao consultar jobs:", e)
+        return []
+
 @st.cache_data(ttl=600)
 def ler_base(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -330,6 +352,15 @@ def main():
         # Ticket médio = produção / total de vendas
         ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
         roi = previsao_faturamento - investimento
+
+        # --- RESUMO DOS JOBS ---
+        st.markdown("<h4 style='color:#fff; text-align:center;'>Resumo dos Jobs (Mês Atual)</h4>", unsafe_allow_html=True)
+        periodo_atual = datetime.now().strftime('%Y-%m')
+        resumo_jobs = obter_resumo_jobs(periodo=periodo_atual)
+        if resumo_jobs:
+            st.dataframe(pd.DataFrame(resumo_jobs))
+        else:
+            st.info("Nenhum job encontrado para o mês atual.")
 
         st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
