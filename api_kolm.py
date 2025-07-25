@@ -353,15 +353,6 @@ def main():
         ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
         roi = previsao_faturamento - investimento
 
-        # --- RESUMO DOS JOBS ---
-        st.markdown("<h4 style='color:#fff; text-align:center;'>Resumo dos Jobs (Mês Atual)</h4>", unsafe_allow_html=True)
-        periodo_atual = datetime.now().strftime('%Y-%m')
-        resumo_jobs = obter_resumo_jobs(periodo=periodo_atual)
-        if resumo_jobs:
-            st.dataframe(pd.DataFrame(resumo_jobs))
-        else:
-            st.info("Nenhum job encontrado para o mês atual.")
-
         st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
             <h4 style='color:#fff; text-align:center;'>Kolmeya</h4>
