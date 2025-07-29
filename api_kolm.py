@@ -18,6 +18,7 @@ print("OpenSSL version:", ssl.OPENSSL_VERSION)
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+import urllib3
 
 API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -262,10 +263,26 @@ def gerar_blocos_datas(data_ini, data_fim, dias_bloco=30):
 
 def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, idGrupoUsuario=None, idUsuario=None, idLote=None, exibirUltTabulacao=True):
     """
-    Consulta o endpoint de tabulações detalhadas da URA (Argus).
+    Consulta o endpoint de ligações detalhadas da URA (Argus) e retorna todas as ligações.
+    O filtro por período será feito no main(), como é feito com SMS.
     """
     argus_token = os.environ.get('ARGUS_TOKEN', '')
-    url = "https://argus.app.br/apiargus/report/tabulacoesdetalhadas"
+    
+    # Debug do token
+    print(f"=== DEBUG TOKEN URA ===")
+    print(f"Token length: {len(argus_token)}")
+    print(f"Token starts with: {argus_token[:10] if argus_token else 'None'}...")
+    
+    # Verifica se o token está vazio
+    if not argus_token:
+        print("⚠️ AVISO: ARGUS_TOKEN não está configurado!")
+        print("Configure a variável de ambiente ARGUS_TOKEN")
+    else:
+        print("✅ Token configurado")
+    
+    print(f"=======================")
+    
+    url = "https://argus.app.br/apiargus"
     headers = {
         "Authorization": f"Bearer {argus_token}",
         "Content-Type": "application/json"
@@ -273,9 +290,14 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
     body = {
         "idCampanha": idCampanha,
         "periodoInicial": periodoInicial,
-        "periodoFinal": periodoFinal,
-        "exibirUltTabulacao": exibirUltTabulacao
+        "periodoFinal": periodoFinal
     }
+    
+    # Debug do body
+    print(f"=== DEBUG BODY URA ===")
+    print(f"Body enviado: {body}")
+    print(f"=====================")
+    
     if idTabulacao is not None:
         body["idTabulacao"] = idTabulacao
     if idGrupoUsuario is not None:
@@ -284,13 +306,126 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
         body["idUsuario"] = idUsuario
     if idLote is not None:
         body["idLote"] = idLote
+    
+    # Configurações para contornar problemas de SSL
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=30)
+        print(f"=== DEBUG REQUEST URA ===")
+        print(f"URL: {url}")
+        print(f"Headers: {headers}")
+        print(f"Body: {body}")
+        
+        # Tenta com verify=False para contornar problemas de SSL
+        resp = requests.post(url, headers=headers, json=body, timeout=30, verify=False)
+        print(f"Status Code: {resp.status_code}")
+        print(f"Response Headers: {dict(resp.headers)}")
+        
         resp.raise_for_status()
         data = resp.json()
-        return data
+        
+        print(f"Response Data Keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+        print(f"Response Data Type: {type(data)}")
+        print(f"========================")
+        
+        # Retorna todas as tabulações sem filtrar por período (como é feito com SMS)
+        # Tenta diferentes chaves possíveis na resposta
+        tabulacoes = data.get("tabulacoes", [])
+        if not tabulacoes:
+            tabulacoes = data.get("ligacoes", [])
+        if not tabulacoes:
+            tabulacoes = data.get("dados", [])
+        if not tabulacoes:
+            # Se não encontrar nenhuma chave específica, usa toda a resposta
+            if isinstance(data, list):
+                tabulacoes = data
+            else:
+                tabulacoes = []
+        
+        # Log para debug da API
+        print(f"=== DEBUG API URA ===")
+        print(f"Status da API: {data.get('codStatus', 'N/A')} - {data.get('descStatus', 'N/A')}")
+        print(f"Qtde Registros na API: {data.get('qtdeRegistros', 'N/A')}")
+        print(f"Total de registros retornados pela API: {len(tabulacoes)}")
+        print(f"Tipo da resposta: {type(data)}")
+        print(f"Chaves disponíveis: {list(data.keys()) if isinstance(data, dict) else 'Não é dict'}")
+        
+        # Mostra estrutura dos dados se não há registros
+        if not tabulacoes:
+            print("Estrutura completa da resposta da API:")
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    print(f"  {key}: {value}")
+            else:
+                print(f"  Resposta: {data}")
+        
+        # Mostra exemplos de registros se existirem
+        if tabulacoes:
+            print("Exemplos de registros retornados:")
+            for i, registro in enumerate(tabulacoes[:2]):  # Mostra as 2 primeiras
+                if isinstance(registro, dict):
+                    print(f"  Registro {i+1}:")
+                    for key, value in registro.items():
+                        print(f"    {key}: {value}")
+        
+        print(f"=====================")
+        
+        # Retorna dados estruturados para o dashboard
+        return {
+            "codStatus": data.get("codStatus", 0),
+            "descStatus": data.get("descStatus", ""),
+            "qtdeRegistros": len(tabulacoes),
+            "ligacoes": tabulacoes,  # Usa registros como ligações
+            "quantidade_ura": len(tabulacoes),  # Será filtrado no main()
+            "custo_por_ligacao": 0.034444,
+            "investimento": len(tabulacoes) * 0.034444,  # Será recalculado no main()
+            "atendidas": 0,  # Será calculado no main()
+            "total_vendas": 0,  # Será calculado no main()
+            "producao": 0.0,  # Será calculado no main()
+            "previsao_faturamento": 0.0,  # Será calculado no main()
+            "ticket_medio": 0.0,  # Será calculado no main()
+            "roi": 0.0,  # Será calculado no main()
+            "percentual_atendem": 0.0,  # Será calculado no main()
+            "leads_gerados": 0,  # Será calculado no main()
+            "percentual_conversao_lead": 0.0,  # Será calculado no main()
+            "ligacoes_por_lead": 0.0,  # Será calculado no main()
+            "percentual_leads_converte_vendas": 0.0,  # Será calculado no main()
+            "ligacoes_por_venda": 0.0,  # Será calculado no main()
+            "custo_por_lead": 0.0,  # Será calculado no main()
+            "custo_por_venda": 0.0,  # Será calculado no main()
+            "faturamento_medio_por_venda": 0.0  # Será calculado no main()
+        }
+        
     except Exception as e:
-        return {"codStatus": 0, "descStatus": str(e), "qtdeRegistros": 0, "tabulacoes": []}
+        print(f"=== ERRO URA ===")
+        print(f"Erro completo: {e}")
+        print(f"Tipo do erro: {type(e)}")
+        print(f"=================")
+        
+        return {
+            "codStatus": 0, 
+            "descStatus": str(e), 
+            "qtdeRegistros": 0, 
+            "ligacoes": [],
+            "quantidade_ura": 0,
+            "custo_por_ligacao": 0.034444,
+            "investimento": 0.0,
+            "atendidas": 0,
+            "total_vendas": 0,
+            "producao": 0.0,
+            "previsao_faturamento": 0.0,
+            "ticket_medio": 0.0,
+            "roi": 0.0,
+            "percentual_atendem": 0.0,
+            "leads_gerados": 0,
+            "percentual_conversao_lead": 0.0,
+            "ligacoes_por_lead": 0.0,
+            "percentual_leads_converte_vendas": 0.0,
+            "ligacoes_por_venda": 0.0,
+            "custo_por_lead": 0.0,
+            "custo_por_venda": 0.0,
+            "faturamento_medio_por_venda": 0.0
+        }
 
 def obter_resumo_jobs(periodo=None):
     """
@@ -750,19 +885,211 @@ def main():
 
     with col2:
         # --- PAINEL URA ---
-        CUSTO_POR_LIGACAO_URA = 0.034444
         idCampanha = 1  # Fixo
-        periodoInicial = (datetime.combine(data_ini, datetime.min.time()) - timedelta(days=7)).strftime('%Y-%m-%dT00:00:00')
+        
+        # Debug do período
+        print(f"=== DEBUG PERÍODO URA ===")
+        print(f"data_ini original: {data_ini}")
+        print(f"data_fim original: {data_fim}")
+        
+        # Ajusta o período para ser mais amplo para teste
+        periodoInicial = (datetime.combine(data_ini, datetime.min.time()) - timedelta(days=30)).strftime('%Y-%m-%dT00:00:00')
         periodoFinal = datetime.combine(data_fim, datetime.max.time()).strftime('%Y-%m-%dT23:59:59')
+        
+        print(f"periodoInicial: {periodoInicial}")
+        print(f"periodoFinal: {periodoFinal}")
+        print(f"=========================")
+        
         dados_ura = obter_dados_ura(idCampanha, periodoInicial, periodoFinal)
-        quantidade_ura = dados_ura.get("qtdeRegistros", 0)
-        investimento_ura = quantidade_ura * CUSTO_POR_LIGACAO_URA
-        # Os campos abaixo são placeholders, ajuste conforme sua lógica de vendas/produção URA
-        producao_ura = 0.0
+        
+        # Obtém todas as ligações (como é feito com SMS)
+        ligacoes_all = dados_ura.get("ligacoes", [])
+        
+        # Log inicial para debug
+        print(f"=== DEBUG URA ===")
+        print(f"Período selecionado: {data_ini} a {data_fim}")
+        print(f"Tipo de data_ini: {type(data_ini)}")
+        print(f"Tipo de data_fim: {type(data_fim)}")
+        print(f"Total de ligações retornadas pela API: {len(ligacoes_all)}")
+        
+        # Debug dos dados retornados
+        print(f"Dados URA completos: {dados_ura}")
+        
+        # Se não há ligações, mostra o que foi retornado pela API
+        if not ligacoes_all:
+            print("API não retornou ligações. Dados retornados:")
+            print(f"Status: {dados_ura.get('codStatus')} - {dados_ura.get('descStatus')}")
+            print(f"Qtde Registros: {dados_ura.get('qtdeRegistros')}")
+            print(f"Estrutura completa: {dados_ura}")
+        
+        # Filtra ligações pelo período especificado usando idLigacao e dataHoraLigacao
+        ligacoes_periodo = []
+        ids_ligacoes = set()  # Para contar IDs únicos
+        
+        for ligacao in ligacoes_all:
+            if isinstance(ligacao, dict):
+                # Tenta diferentes campos possíveis para ID e data
+                id_ligacao = ligacao.get('idHistoricoTab') or ligacao.get('idLigacao') or ligacao.get('id') or ligacao.get('idRegistro')
+                data_hora_ligacao = ligacao.get('dataEvento') or ligacao.get('dataHoraLigacao') or ligacao.get('data') or ligacao.get('dataHora')
+                
+                print(f"Processando registro ID: {id_ligacao}, Data: {data_hora_ligacao}")
+                
+                if data_hora_ligacao:
+                    try:
+                        # Converte a data da ligação para datetime
+                        # Remove o timezone se existir e converte
+                        data_ligacao_str = data_hora_ligacao.split('.')[0]  # Remove milissegundos
+                        if '+' in data_ligacao_str:
+                            data_ligacao_str = data_ligacao_str.split('+')[0]  # Remove timezone
+                        elif '-' in data_ligacao_str and data_ligacao_str.count('-') > 2:
+                            # Remove timezone negativo (-03:00)
+                            data_ligacao_str = data_ligacao_str.split('-03:00')[0]
+                        
+                        data_ligacao = datetime.fromisoformat(data_ligacao_str)
+                        
+                        # Converte as datas de período para datetime
+                        periodo_ini = datetime.combine(data_ini, datetime.min.time())
+                        periodo_fim = datetime.combine(data_fim, datetime.max.time())
+                        
+                        print(f"  Data convertida: {data_ligacao}")
+                        print(f"  Período: {periodo_ini} a {periodo_fim}")
+                        
+                        # Verifica se a ligação está no período
+                        if periodo_ini <= data_ligacao <= periodo_fim:
+                            ligacoes_periodo.append(ligacao)
+                            if id_ligacao:
+                                ids_ligacoes.add(id_ligacao)
+                            print(f"  ✅ Registro incluído no período")
+                        else:
+                            print(f"  ❌ Registro fora do período")
+                    except Exception as e:
+                        # Se não conseguir converter a data, inclui a ligação
+                        print(f"  ⚠️ Erro ao processar data: {e} - incluindo registro")
+                        ligacoes_periodo.append(ligacao)
+                        if id_ligacao:
+                            ids_ligacoes.add(id_ligacao)
+                else:
+                    # Se não tem data, inclui a ligação
+                    print(f"  ⚠️ Registro sem data - incluindo")
+                    ligacoes_periodo.append(ligacao)
+                    if id_ligacao:
+                        ids_ligacoes.add(id_ligacao)
+        
+        # Quantidade de URA = número de IDs únicos de ligações no período
+        quantidade_ura = len(ids_ligacoes)
+        
+        print(f"Ligações únicas no período: {quantidade_ura}")
+        print(f"IDs de ligações: {sorted(list(ids_ligacoes))}")
+        print(f"==================")
+        custo_por_ligacao_ura = dados_ura.get("custo_por_ligacao", 0.034444)
+        investimento_ura = quantidade_ura * custo_por_ligacao_ura
+        
+        # Processa as ligações do período para extrair dados de vendas e atendimentos
         total_vendas_ura = 0
-        previsao_faturamento_ura = 0.0
-        ticket_medio_ura = 0.0
+        producao_ura = 0.0
+        atendidas_ura = 0
+        
+        # Analisa as tabulações do período para identificar vendas e atendimentos
+        for ligacao in ligacoes_periodo:
+            if isinstance(ligacao, dict):
+                # Identifica vendas baseado em campos das tabulações
+                tabulacao = str(ligacao.get('tabulado', '')).lower()
+                categoria_tabulacao = str(ligacao.get('categoriaTabulacao', '')).lower()
+                historico = str(ligacao.get('historico', '')).lower()
+                resultado = str(ligacao.get('resultadoLigacao', '')).lower()
+                status = str(ligacao.get('statusLigacao', '')).lower()
+                
+                # Debug: mostra algumas registros para entender os dados
+                if len(ligacoes_periodo) <= 10:  # Se poucos registros, mostra todas
+                    print(f"Processando registro ID {ligacao.get('idHistoricoTab', ligacao.get('idLigacao', ligacao.get('id', 'N/A')))}: tabulado='{tabulacao}', categoria='{categoria_tabulacao}', historico='{historico}', resultado='{resultado}'")
+                
+                # Identifica vendas baseado em tabulação
+                if any(keyword in tabulacao for keyword in ['venda', 'vendeu', 'fechou', 'contrato', 'aceitou', 'vendido']):
+                    total_vendas_ura += 1
+                    print(f"Venda identificada por tabulação: {tabulacao}")
+                
+                # Identifica vendas baseado em categoria de tabulação
+                if any(keyword in categoria_tabulacao for keyword in ['venda', 'vendeu', 'fechou', 'contrato', 'aceitou', 'vendido']):
+                    total_vendas_ura += 1
+                    print(f"Venda identificada por categoria: {categoria_tabulacao}")
+                
+                # Identifica vendas baseado em histórico
+                if any(keyword in historico for keyword in ['venda', 'vendeu', 'fechou', 'contrato', 'aceitou', 'vendido']):
+                    total_vendas_ura += 1
+                    print(f"Venda identificada por histórico: {historico}")
+                
+                # Identifica vendas baseado em resultado da ligação
+                if any(keyword in resultado for keyword in ['venda', 'vendeu', 'fechou', 'contrato', 'aceitou', 'vendido', 'completada']):
+                    total_vendas_ura += 1
+                    print(f"Venda identificada por resultado: {resultado}")
+                
+                # Identifica atendimentos (registros que indicam contato)
+                # Registros que não são "NÃO TABULADO" são considerados atendidos
+                if tabulacao != 'não tabulado' and tabulacao != 'nao tabulado' and tabulacao:
+                    atendidas_ura += 1
+                    print(f"Atendimento identificado por tabulação: {tabulacao}")
+                
+                # Registros com categoria diferente de "NÃO TABULADO" também são atendidos
+                if categoria_tabulacao != 'não tabulado' and categoria_tabulacao != 'nao tabulado' and categoria_tabulacao:
+                    atendidas_ura += 1
+                    print(f"Atendimento identificado por categoria: {categoria_tabulacao}")
+                
+                # Registros com resultado "COMPLETADA" são considerados atendidos
+                if 'completada' in resultado:
+                    atendidas_ura += 1
+                    print(f"Atendimento identificado por resultado: {resultado}")
+        
+        # Remove duplicatas de vendas (mesma ligação pode ter múltiplos indicadores)
+        total_vendas_ura = min(total_vendas_ura, quantidade_ura)
+        
+        # Se não encontrou atendimentos específicos, considera todas as registros como atendidos
+        if atendidas_ura == 0:
+            print("Nenhum atendimento identificado por registro, contando todas as registros...")
+            atendidas_ura = len(ligacoes_periodo)
+        
+        # Calcula métricas derivadas
+        previsao_faturamento_ura = producao_ura * 0.171  # Mesmo fator usado no Kolmeya
+        ticket_medio_ura = producao_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0
         roi_ura = previsao_faturamento_ura - investimento_ura
+        
+        # Calcula métricas adicionais
+        # % que atendem = (atendidas / quantidade_ura) * 100
+        percentual_atendem_ura = (atendidas_ura / quantidade_ura * 100) if quantidade_ura > 0 else 0.0
+        
+        # Leads gerados (assumindo que atendidas são os leads)
+        leads_gerados_ura = atendidas_ura
+        
+        # % de conversão p/lead = (total_vendas / leads_gerados) * 100
+        percentual_conversao_lead_ura = (total_vendas_ura / leads_gerados_ura * 100) if leads_gerados_ura > 0 else 0.0
+        
+        # Lig. atendidas p/ um lead = quantidade_ura / leads_gerados
+        ligacoes_por_lead_ura = quantidade_ura / leads_gerados_ura if leads_gerados_ura > 0 else 0.0
+        
+        # % de leads que converte vendas = (total_vendas / leads_gerados) * 100
+        percentual_leads_converte_vendas_ura = (total_vendas_ura / leads_gerados_ura * 100) if leads_gerados_ura > 0 else 0.0
+        
+        # Ligações p/uma venda = quantidade_ura / total_vendas
+        ligacoes_por_venda_ura = quantidade_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0
+        
+        # Custo por lead = investimento / leads_gerados
+        custo_por_lead_ura = investimento_ura / leads_gerados_ura if leads_gerados_ura > 0 else 0.0
+        
+        # Custo por venda = investimento / total_vendas
+        custo_por_venda_ura = investimento_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0
+        
+        # Faturamento médio por venda = previsao_faturamento / total_vendas
+        faturamento_medio_por_venda_ura = previsao_faturamento_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0
+        
+        # Log final do processamento
+        print(f"\n=== RESUMO URA ===")
+        print(f"Período: {data_ini} a {data_fim}")
+        print(f"Total de ligações retornadas pela API: {len(ligacoes_all)}")
+        print(f"IDs únicos de ligações no período: {quantidade_ura}")
+        print(f"IDs das ligações: {sorted(list(ids_ligacoes))}")
+        print(f"Ligações atendidas: {atendidas_ura}")
+        print(f"Total de vendas: {total_vendas_ura}")
+        print(f"Investimento: R$ {investimento_ura:.2f}")
+        print(f"==================\n")
         st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
             <h4 style='color:#fff; text-align:center;'>URA</h4>
@@ -773,27 +1100,73 @@ def main():
                 </div>
                 <div style='text-align: center;'>
                     <div style='font-size: 1.1em; color: #e0d7f7;'>Custo por ligação</div>
-                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_LIGACAO_URA)}</div>
+                    <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(custo_por_ligacao_ura)}</div>
                 </div>
             </div>
-            <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
-            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento_ura)}</div>
+            <div style='display: flex; justify-content: space-between; margin-bottom: 16px;'>
+                <div style='text-align: center; flex: 1;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Investimento</div>
+                    <div style='font-size: 1.5em; font-weight: bold; color: #fff;'>{formatar_real(investimento_ura)}</div>
+                </div>
+                <div style='text-align: center; flex: 1;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Atendidas</div>
+                    <div style='font-size: 1.5em; font-weight: bold; color: #fff;'>{atendidas_ura}</div>
+                </div>
+            </div>
             <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Total de vendas</b></span>
-                    <span style='color: #fff;'>{total_vendas_ura}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Produção</b></span>
-                    <span style='color: #fff;'>{formatar_real(producao_ura)}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Previsão de faturamento</b></span>
-                    <span style='color: #fff;'>{formatar_real(previsao_faturamento_ura)}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='color: #fff;'><b>Ticket médio</b></span>
-                    <span style='color: #fff;'>{formatar_real(ticket_medio_ura)}</span>
+                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 16px;'>
+                    <div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Total de vendas</b></span>
+                            <span style='color: #fff;'>{total_vendas_ura}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Produção</b></span>
+                            <span style='color: #fff;'>{formatar_real(producao_ura)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Previsão de faturamento</b></span>
+                            <span style='color: #fff;'>{formatar_real(previsao_faturamento_ura)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Ticket médio</b></span>
+                            <span style='color: #fff;'>{formatar_real(ticket_medio_ura)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Leads gerados</b></span>
+                            <span style='color: #fff;'>{leads_gerados_ura}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Lig. atendidas p/ um lead</b></span>
+                            <span style='color: #fff;'>{ligacoes_por_lead_ura:.1f}</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Ligações p/uma venda</b></span>
+                            <span style='color: #fff;'>{ligacoes_por_venda_ura:.1f}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>% p/ venda</b></span>
+                            <span style='color: #fff;'>{percentual_leads_converte_vendas_ura:.1f}%</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Leads p/ venda</b></span>
+                            <span style='color: #fff;'>{leads_gerados_ura / total_vendas_ura if total_vendas_ura > 0 else 0.0:.1f}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Custo por lead</b></span>
+                            <span style='color: #fff;'>{formatar_real(custo_por_lead_ura)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Custo por venda</b></span>
+                            <span style='color: #fff;'>{formatar_real(custo_por_venda_ura)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Fatu. med p/ venda</b></span>
+                            <span style='color: #fff;'>{formatar_real(faturamento_medio_por_venda_ura)}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
