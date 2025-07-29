@@ -16,6 +16,8 @@ import httpx  # Adicionado para garantir uso do httpx
 import ssl
 print("OpenSSL version:", ssl.OPENSSL_VERSION)
 import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -108,6 +110,55 @@ def obter_dados_sms(now):
                 bloco_inicio = bloco_fim
             except Exception as e:
                 bloco_inicio = bloco_fim  # Evita loop infinito em caso de erro
+    return all_messages
+
+def obter_dados_sms_periodo(data_ini, data_fim):
+    """
+    Busca os dados de SMS do Kolmeya para o período de data_ini até data_fim (inclusive).
+    """
+    token = os.environ.get("KOLMEYA_TOKEN")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    API_URL = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
+    all_messages = []
+    dia = data_ini
+    while dia <= data_fim:
+        dia_inicio = datetime.combine(dia, datetime.min.time())
+        dia_fim = datetime.combine(dia, datetime.max.time())
+        bloco_inicio = dia_inicio
+        while bloco_inicio < dia_fim:
+            bloco_fim = min(bloco_inicio + timedelta(hours=1), dia_fim)
+            body = {
+                "start_at": bloco_inicio.strftime('%Y-%m-%d %H:%M'),
+                "end_at": bloco_fim.strftime('%Y-%m-%d %H:%M'),
+                "limit": 30000
+            }
+            try:
+                resp = requests.post(API_URL, headers=headers, json=body, timeout=20)
+                resp.raise_for_status()
+                messages = resp.json().get("messages", [])
+                all_messages.extend(messages)
+                if len(messages) == 30000:
+                    # Divide o bloco em intervalos de 15 minutos
+                    sub_inicio = bloco_inicio
+                    while sub_inicio < bloco_fim:
+                        sub_fim = min(sub_inicio + timedelta(minutes=15), bloco_fim)
+                        sub_body = {
+                            "start_at": sub_inicio.strftime('%Y-%m-%d %H:%M'),
+                            "end_at": sub_fim.strftime('%Y-%m-%d %H:%M'),
+                            "limit": 30000
+                        }
+                        sub_resp = requests.post(API_URL, headers=headers, json=sub_body, timeout=20)
+                        sub_resp.raise_for_status()
+                        sub_messages = sub_resp.json().get("messages", [])
+                        all_messages.extend(sub_messages)
+                        sub_inicio = sub_fim
+                bloco_inicio = bloco_fim
+            except Exception as e:
+                bloco_inicio = bloco_fim  # Evita loop infinito em caso de erro
+        dia += timedelta(days=1)
     return all_messages
 
 def limpar_telefone(telefone):
@@ -244,6 +295,7 @@ def obter_dados_ura(idCampanha, periodoInicial, periodoFinal, idTabulacao=None, 
 def obter_resumo_jobs(periodo=None):
     """
     Consulta o endpoint de resumo dos jobs enviados por um período específico (formato Y-m).
+    Retorna os jobs e calcula o total de acessos (leads gerados).
     """
     token = os.environ.get("KOLMEYA_TOKEN")
     headers = {
@@ -259,7 +311,27 @@ def obter_resumo_jobs(periodo=None):
         print("Status:", resp.status_code)
         print("Resposta:", resp.text)
         resp.raise_for_status()
-        return resp.json().get("jobs", [])
+        jobs = resp.json().get("jobs", [])
+        
+        # Calcula o total de acessos (leads gerados)
+        total_acessos = 0
+        for job in jobs:
+            if isinstance(job, dict) and 'acessos' in job:
+                try:
+                    acessos = int(job['acessos']) if job['acessos'] and str(job['acessos']).isdigit() else 0
+                    total_acessos += acessos
+                except (ValueError, TypeError):
+                    continue
+        
+        # Armazena o total de leads gerados no session_state
+        if 'st' in globals() or 'streamlit' in globals():
+            try:
+                import streamlit as st
+                st.session_state['leads_gerados'] = total_acessos
+            except:
+                pass
+        
+        return jobs
     except Exception as e:
         print("Erro ao consultar jobs:", e)
         return []
@@ -271,7 +343,15 @@ def ler_base(uploaded_file):
             return pd.read_csv(uploaded_file, dtype=str, sep=';')
         except Exception:
             uploaded_file.seek(0)
-            return pd.read_csv(uploaded_file, dtype=str, sep=',')
+            try:
+                return pd.read_csv(uploaded_file, dtype=str, sep=',')
+            except Exception:
+                uploaded_file.seek(0)
+                try:
+                    return pd.read_csv(uploaded_file, dtype=str)  # Tenta o padrão do pandas
+                except Exception as e:
+                    uploaded_file.seek(0)
+                    raise e
     else:
         return pd.read_excel(uploaded_file, dtype=str)
 
@@ -280,6 +360,7 @@ def ler_base(uploaded_file):
 def obter_resumo_jobs_kolmeya(period, token=None):
     """
     Consulta o endpoint de resumo dos jobs enviados por período (YYYY-MM) do Kolmeya.
+    Retorna os jobs e calcula o total de acessos (leads gerados) e entregues.
     """
     import requests
     API_URL = "https://kolmeya.com.br/api/v1/sms/reports/quantity-jobs"
@@ -294,20 +375,186 @@ def obter_resumo_jobs_kolmeya(period, token=None):
     try:
         resp = requests.post(API_URL, headers=headers, json=body, timeout=30)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        jobs = data.get("jobs", [])
+        # Filtra apenas jobs com centro_custo FGTS
+        jobs_fgts = [job for job in jobs if isinstance(job, dict) and str(job.get('centro_custo', '')).strip().lower() == 'fgts']
+        # Calcula o total de acessos (leads gerados)
+        total_acessos = 0
+        total_entregues = 0
+        for job in jobs_fgts:
+            if 'acessos' in job:
+                try:
+                    acessos = int(job['acessos']) if job['acessos'] and str(job['acessos']).isdigit() else 0
+                    total_acessos += acessos
+                except (ValueError, TypeError):
+                    continue
+            if 'entregues' in job:
+                try:
+                    entregues = int(job['entregues']) if job['entregues'] and str(job['entregues']).isdigit() else 0
+                    total_entregues += entregues
+                except (ValueError, TypeError):
+                    continue
+        # Adiciona os totais ao retorno
+        data['jobs'] = jobs_fgts
+        data['total_leads_gerados'] = total_acessos
+        data['total_entregues'] = total_entregues
+        
+        # Armazena os totais no session_state se estiver no contexto do Streamlit
+        if 'st' in globals() or 'streamlit' in globals():
+            try:
+                import streamlit as st
+                st.session_state['leads_gerados'] = total_acessos
+                st.session_state['total_entregues'] = total_entregues
+            except:
+                pass
+        
+        return data
     except Exception as e:
         return {"erro": str(e)}
 
+def obter_saldo_kolmeya(token=None):
+    """
+    Consulta o saldo disponível do Kolmeya via endpoint /api/v1/sms/balance.
+    """
+    if token is None:
+        token = os.environ.get("KOLMEYA_TOKEN", "")
+    url = "https://kolmeya.com.br/api/v1/sms/balance"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    try:
+        resp = requests.post(url, headers=headers, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("balance")
+    except Exception as e:
+        return f"Erro ao consultar saldo: {e}"
+
+def buscar_valor_af_cpfs(cpfs, data_ini=None, data_fim=None, max_workers=2):
+    """
+    Consulta a Facta dividindo em lotes e processando em paralelo controlado.
+    Divide a lista em 4 partes, cada uma processada em paralelo, depois junta os resultados.
+    """
+    if len(cpfs) <= 10:  # Se poucos CPFs, processa sequencialmente
+        return buscar_valor_af_cpfs_sequencial(cpfs, data_ini, data_fim)
+    
+    # Divide a lista em 4 lotes
+    tamanho_lote = len(cpfs) // 4
+    lote1 = cpfs[:tamanho_lote]
+    lote2 = cpfs[tamanho_lote:tamanho_lote*2]
+    lote3 = cpfs[tamanho_lote*2:tamanho_lote*3]
+    lote4 = cpfs[tamanho_lote*3:]  # Último lote pega o resto
+    
+    resultados = {}
+    
+    def processar_lote(cpfs_lote):
+        resultados_lote = {}
+        for cpf in cpfs_lote:
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    propostas = obter_propostas_facta(cpf=cpf, data_ini=data_ini, data_fim=data_fim)
+                    # Filtra apenas propostas com status "16 - CONTRATO PAGO"
+                    propostas_filtradas = [p for p in propostas if p.get('status_proposta') == '16 - CONTRATO PAGO']
+                    valores_af = [p.get('valor_af') for p in propostas_filtradas if 'valor_af' in p]
+                    time.sleep(0.1)  # Delay para evitar sobrecarga na API
+                    resultados_lote[cpf] = valores_af
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        print(f"Erro ao consultar CPF {cpf} após {max_retries} tentativas: {e}")
+                        resultados_lote[cpf] = []
+                    time.sleep(0.5)  # Delay maior entre retries
+        return resultados_lote
+    
+    # Processa os 4 lotes em paralelo
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future1 = executor.submit(processar_lote, lote1)
+        future2 = executor.submit(processar_lote, lote2)
+        future3 = executor.submit(processar_lote, lote3)
+        future4 = executor.submit(processar_lote, lote4)
+        
+        # Junta os resultados
+        resultados.update(future1.result())
+        resultados.update(future2.result())
+        resultados.update(future3.result())
+        resultados.update(future4.result())
+    
+    return resultados
+
+def buscar_valor_af_cpfs_sequencial(cpfs, data_ini=None, data_fim=None):
+    """
+    Consulta a Facta sequencialmente para cada CPF (usado para poucos CPFs).
+    """
+    resultados = {}
+    for cpf in cpfs:
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                propostas = obter_propostas_facta(cpf=cpf, data_ini=data_ini, data_fim=data_fim)
+                # Filtra apenas propostas com status "16 - CONTRATO PAGO"
+                propostas_filtradas = [p for p in propostas if p.get('status_proposta') == '16 - CONTRATO PAGO']
+                valores_af = [p.get('valor_af') for p in propostas_filtradas if 'valor_af' in p]
+                resultados[cpf] = valores_af
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"Erro ao consultar CPF {cpf} após {max_retries} tentativas: {e}")
+                    resultados[cpf] = []
+                time.sleep(0.5)
+    return resultados
+
+def calcular_total_vendas(valores_af):
+    """
+    Calcula e retorna a quantidade total de vendas baseada nos valores_af.
+    
+    Args:
+        valores_af (dict): Dicionário com CPFs como chaves e listas de valores como valores
+    
+    Returns:
+        int: Quantidade total de vendas
+    """
+    total_vendas = 0
+    
+    for cpf, valores in valores_af.items():
+        if valores:  # Se há valores para este CPF
+            total_vendas += len(valores)  # Conta cada valor como uma venda
+    
+    return total_vendas
+
 def main():
-    fixed_now = datetime.now()
-    # --- Calcular leads_gerados automaticamente com jobs do mês atual ---
-    # (Removido: cálculo de leads_gerados do início do main para evitar sobrescrita)
+    # Campos de período para todo o dashboard
+    col_data_ini, col_data_fim = st.columns(2)
+    with col_data_ini:
+        data_ini = st.date_input("Data inicial", value=datetime.now().replace(day=1).date(), key="data_ini_topo")
+    with col_data_fim:
+        data_fim = st.date_input("Data final", value=datetime.now().date(), key="data_fim_topo")
+
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     if HAS_AUTOREFRESH:
         st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")  # Atualiza a cada 2 minutos
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
-    start_at, end_at = get_today_range(fixed_now)
+    # NOVO: Linha de colunas para o saldo Kolmeya (completamente à esquerda)
+    col_saldo, col_vazio = st.columns([0.9, 4.1])
+    with col_saldo:
+        saldo_kolmeya = obter_saldo_kolmeya()
+        st.markdown(
+            f"""
+            <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 32px; color: #fff; min-width: 320px; min-height: 90px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 24px;'>
+                <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Saldo Atual Kolmeya</div>
+                <div style='font-size: 2.5em; font-weight: bold; color: #fff;'>
+                    {formatar_real(float(saldo_kolmeya)) if saldo_kolmeya and str(saldo_kolmeya).replace(",", ".").replace(".", "", 1).replace("-", "").isdigit() else saldo_kolmeya}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    start_at, end_at = get_today_range(datetime.combine(data_ini, datetime.min.time()))
 
     st.markdown(
         """
@@ -323,42 +570,100 @@ def main():
         unsafe_allow_html=True
     )
 
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns([3, 2])
     # Garante que os valores de produção e vendas da Facta estejam sempre disponíveis no session_state
     if "producao_facta" not in st.session_state:
         st.session_state["producao_facta"] = 0.0
     if "total_vendas_facta" not in st.session_state:
         st.session_state["total_vendas_facta"] = 0
+    
+    # Consulta os jobs FGTS para o período selecionado
+    meses = set()
+    atual = data_ini.replace(day=1)
+    while atual <= data_fim:
+        meses.add(atual.strftime('%Y-%m'))
+        if atual.month == 12:
+            atual = atual.replace(year=atual.year+1, month=1)
+        else:
+            atual = atual.replace(month=atual.month+1)
+    total_acessos_fgts = 0
+    for mes in meses:
+        resumo_jobs = obter_resumo_jobs_kolmeya(mes)
+        jobs = resumo_jobs.get('jobs', [])
+        for job in jobs:
+            if isinstance(job, dict) and 'fgts' in str(job.get('centro_custo', '')).lower():
+                try:
+                    acessos = int(job['acessos']) if job['acessos'] and str(job['acessos']).isdigit() else 0
+                except (ValueError, TypeError):
+                    acessos = 0
+                total_acessos_fgts += acessos
+    st.session_state['acessos'] = total_acessos_fgts
+    # Soma dos entregues dos jobs FGTS
+    sms_entregues_jobs = 0
+    for mes in meses:
+        resumo_jobs = obter_resumo_jobs_kolmeya(mes)
+        jobs = resumo_jobs.get('jobs', [])
+        for job in jobs:
+            if 'entregues' in job:
+                try:
+                    entregues = int(job['entregues']) if job['entregues'] and str(job['entregues']).isdigit() else 0
+                except (ValueError, TypeError):
+                    entregues = 0
+                sms_entregues_jobs += entregues
+    # No painel Kolmeya, use sms_entregues_jobs para exibir SMS entregues:
+    total_entregues = sms_entregues_jobs
+
     with col1:
         # --- PAINEL KOLMEYA ---
-        messages = obter_dados_sms(fixed_now)
-        quantidade_sms = len(messages)
+        # Obtenha todas as mensagens
+        messages_all = obter_dados_sms_periodo(data_ini, data_fim)
+        # Filtra apenas mensagens com centro_custo FGTS (contendo 'fgts' em qualquer parte)
+        messages_fgts = [m for m in messages_all if isinstance(m, dict) and 'fgts' in str(m.get('centro_custo', '')).lower()]
+        quantidade_sms = len(messages_fgts)
         investimento = quantidade_sms * CUSTO_POR_ENVIO
         telefones = []
-        for m in messages:
+        for m in messages_fgts:
             tel = m.get('telefone') if isinstance(m, dict) else None
             if tel:
                 telefones.append(limpar_telefone(tel))
-        cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
+        cpf = [str(m.get("cpf")).zfill(11) for m in messages_fgts if isinstance(m, dict) and m.get("cpf")]
         # --- NOVOS NA CARTEIRA ---
         # Buscar CPFs da semana anterior
-        semana_atual_ini = fixed_now - timedelta(days=fixed_now.weekday())
+        semana_atual_ini = datetime.combine(data_ini, datetime.min.time()) - timedelta(days=datetime.combine(data_ini, datetime.min.time()).weekday())
         semana_anterior_ini = semana_atual_ini - timedelta(days=7)
         semana_anterior_fim = semana_atual_ini - timedelta(seconds=1)
-        # Busca SMS da semana anterior
+        # Busca SMS da semana anterior (todas as mensagens)
         messages_semana_anterior = obter_dados_sms(semana_anterior_fim)
         cpfs_semana_anterior = set(str(m.get("cpf")).zfill(11) for m in messages_semana_anterior if isinstance(m, dict) and m.get("cpf"))
-        cpfs_semana_atual = set(cpfs)
+        cpfs_semana_atual = set(str(m.get("cpf")).zfill(11) for m in messages_all if isinstance(m, dict) and m.get("cpf"))
         novos_na_carteira = len(cpfs_semana_atual - cpfs_semana_anterior)
         # Produção e vendas vindos da Facta, se já consultados
         producao = st.session_state["producao_facta"]
         total_vendas = st.session_state["total_vendas_facta"]
+        # Obtém leads_gerados antes de usar nas cálculos
+        leads_gerados = st.session_state.get('acessos', 0)
         # Previsão de faturamento = produção * 0,171
         previsao_faturamento = producao * 0.171
         # Ticket médio = produção / total de vendas
         ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
+        # Faturamento médio por venda = previsão de faturamento / total de vendas
+        faturamento_medio_por_venda = previsao_faturamento / total_vendas if total_vendas > 0 else 0.0
+        # Custo por lead = investimento / leads gerados
+        custo_por_lead = investimento / novos_na_carteira if novos_na_carteira > 0 else 0.0
+        # Disparos p/ uma venda = quantidade de SMS / total de vendas
+        disparos_por_venda = quantidade_sms / total_vendas if total_vendas > 0 else 0.0
+        # % p/ venda = total de venda / quantidade de sms
+        percentual_por_venda = (total_vendas / quantidade_sms * 100) if quantidade_sms > 0 else 0.0
+        # Disparos p/ um lead = quantidade de sms / por leads gerados
+        disparos_por_lead = quantidade_sms / novos_na_carteira if novos_na_carteira > 0 else 0.0
+        # Leads p/ venda = leads gerados / total vendas
+        leads_por_venda = novos_na_carteira / total_vendas if total_vendas > 0 else 0.0
         roi = previsao_faturamento - investimento
-        leads_gerados = st.session_state.get('leads_gerados', 0)
+        total_entregues = st.session_state.get('total_entregues', 0)
+        # Calcula a porcentagem de interação (leads gerados em relação ao total de SMS)
+        interacao_percentual = (novos_na_carteira / quantidade_sms * 100) if quantidade_sms > 0 else 0
+        # Custo por venda = investimento / total de vendas
+        custo_por_venda = investimento / total_vendas if total_vendas > 0 else 0.0
         st.markdown(f"""
         <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 16px; color: #fff; min-height: 100%;'>
             <h4 style='color:#fff; text-align:center;'>Kolmeya</h4>
@@ -372,32 +677,70 @@ def main():
                     <div style='font-size: 2em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_ENVIO)}</div>
                 </div>
             </div>
-            <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>Investimento</div>
-            <div style='font-size: 2em; font-weight: bold; margin-bottom: 16px; color: #fff;'>{formatar_real(investimento)}</div>
+            <div style='display: flex; justify-content: space-between; margin-bottom: 16px;'>
+                <div style='text-align: center; flex: 1;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Investimento</div>
+                    <div style='font-size: 1.5em; font-weight: bold; color: #fff;'>{formatar_real(investimento)}</div>
+                </div>
+                <div style='text-align: center; flex: 1;'>
+                    <div style='font-size: 1.1em; color: #e0d7f7;'>Interação</div>
+                    <div style='font-size: 1.5em; font-weight: bold; color: #fff;'>{interacao_percentual:.1f}%</div>
+                </div>
+            </div>
             <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 18px 24px; margin-bottom: 16px;'>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Total de vendas</b></span>
-                    <span style='color: #fff;'>{total_vendas}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Produção</b></span>
-                    <span style='color: #fff;'>{formatar_real(producao)}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Previsão de faturamento</b></span>
-                    <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
-                    <span style='color: #fff;'><b>Ticket médio</b></span>
-                    <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='color: #fff;'><b>Leads gerados</b></span>
-                    <span style='color: #fff;'>{leads_gerados}</span>
-                </div>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='color: #fff;'><b>Novos na carteira</b></span>
-                    <span style='color: #fff;'>{novos_na_carteira}</span>
+                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 16px;'>
+                    <div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Total de vendas</b></span>
+                            <span style='color: #fff;'>{total_vendas}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Produção</b></span>
+                            <span style='color: #fff;'>{formatar_real(producao)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Previsão de faturamento</b></span>
+                            <span style='color: #fff;'>{formatar_real(previsao_faturamento)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Ticket médio</b></span>
+                            <span style='color: #fff;'>{formatar_real(ticket_medio)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Leads gerados</b></span>
+                            <span style='color: #fff;'>{novos_na_carteira}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Disparos p/ um lead</b></span>
+                            <span style='color: #fff;'>{disparos_por_lead:.1f}</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Disparos p/ uma venda</b></span>
+                            <span style='color: #fff;'>{disparos_por_venda:.1f}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>% p/ venda</b></span>
+                            <span style='color: #fff;'>{percentual_por_venda:.1f}%</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Leads p/ venda</b></span>
+                            <span style='color: #fff;'>{leads_por_venda:.1f}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Custo por lead</b></span>
+                            <span style='color: #fff;'>{formatar_real(custo_por_lead)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Custo por venda</b></span>
+                            <span style='color: #fff;'>{formatar_real(custo_por_venda)}</span>
+                        </div>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <span style='color: #fff;'><b>Fatu. med p/ venda</b></span>
+                            <span style='color: #fff;'>{formatar_real(faturamento_medio_por_venda)}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div style='font-size: 1.1em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
@@ -409,8 +752,8 @@ def main():
         # --- PAINEL URA ---
         CUSTO_POR_LIGACAO_URA = 0.034444
         idCampanha = 1  # Fixo
-        periodoInicial = (fixed_now - timedelta(days=7)).strftime('%Y-%m-%dT00:00:00')
-        periodoFinal = fixed_now.strftime('%Y-%m-%dT23:59:59')
+        periodoInicial = (datetime.combine(data_ini, datetime.min.time()) - timedelta(days=7)).strftime('%Y-%m-%dT00:00:00')
+        periodoFinal = datetime.combine(data_fim, datetime.max.time()).strftime('%Y-%m-%dT23:59:59')
         dados_ura = obter_dados_ura(idCampanha, periodoInicial, periodoFinal)
         quantidade_ura = dados_ura.get("qtdeRegistros", 0)
         investimento_ura = quantidade_ura * CUSTO_POR_LIGACAO_URA
@@ -461,8 +804,8 @@ def main():
     # --- BUSCAR TELEFONES DOS JOBS EM AMBOS ---
     telefones_em_ambos = set()  # Garante que sempre existe
     jobs_em_ambos = set()
-    if messages and jobs_em_ambos:
-        df_status = pd.DataFrame(messages)
+    if messages_fgts and jobs_em_ambos:
+        df_status = pd.DataFrame(messages_fgts)
         if 'job' in df_status.columns and 'telefone' in df_status.columns:
             mask = df_status['job'].apply(lambda x: int(x) if pd.notnull(x) and str(x).isdigit() else None).isin(jobs_em_ambos)
             telefones_em_ambos = set(df_status.loc[mask, 'telefone'].dropna().astype(str))
@@ -473,57 +816,96 @@ def main():
             df_base = ler_base(uploaded_file)
             st.markdown("<b>Base carregada:</b>", unsafe_allow_html=True)
             st.dataframe(df_base)
+            # --- NOVO: Consulta valor_af na Facta apenas para CPFs cujos telefones aparecem no Kolmeya ---
+            if 'Telefone' in df_base.columns and 'CPF' in df_base.columns:
+                telefones_base = df_base['Telefone'].dropna().astype(str).map(limpar_telefone)
+                telefones_kolmeya = set()
+                for m in messages_fgts:
+                    tel = m.get('telefone') if isinstance(m, dict) else None
+                    if tel:
+                        telefones_kolmeya.add(limpar_telefone(tel))
+                cpfs_filtrados = df_base[telefones_base.isin(telefones_kolmeya)]['CPF'].dropna().astype(str).str.zfill(11)
+                cpfs_filtrados = list(set(cpfs_filtrados))  # Remove duplicatas
+                st.info("Consultando valor_af na Facta apenas para os CPFs cujos telefones aparecem no Kolmeya. Aguarde...")
+                valores_af = buscar_valor_af_cpfs(cpfs_filtrados)
+                import pandas as pd
+                df_valores_af = pd.DataFrame([
+                    {"CPF": cpf, "valor_af": ", ".join(map(str, valores)) if valores else "Não encontrado"}
+                    for cpf, valores in valores_af.items()
+                ])
+                st.write("Valores 'valor_af' encontrados na Facta para cada CPF (apenas telefones presentes no Kolmeya):")
+                st.dataframe(df_valores_af)
+                # --- NOVO: Soma dos valores encontrados para produção ---
+                import re
+                total_producao = 0.0
+                for valores in valores_af.values():
+                    for v in valores:
+                        if v is None:
+                            continue
+                        v_str = str(v).replace(' ', '').replace(',', '.')
+                        # Extrai apenas números e ponto
+                        match = re.match(r'^-?\d+(\.\d+)?$', v_str)
+                        if match:
+                            try:
+                                total_producao += float(v_str)
+                            except Exception:
+                                pass
+                st.session_state["producao_facta"] = total_producao
+                
+                # --- NOVO: Calcula o total de vendas ---
+                total_vendas = calcular_total_vendas(valores_af)
+                st.session_state["total_vendas_facta"] = total_vendas
+                
+                # Exibe o valor total encontrado para produção
+                if total_producao > 0:
+                    st.success(f"Total de produção (soma dos valor_af encontrados): R$ {total_producao:,.2f}")
+                else:
+                    st.warning("Nenhum valor válido de produção encontrado (valor_af). Verifique os dados retornados.")
+                
+                # Exibe o total de vendas
+                if total_vendas > 0:
+                    st.success(f"Total de vendas: {total_vendas}")
+                else:
+                    st.warning("Nenhuma venda encontrada. Verifique os dados retornados.")
+                
+                # Força atualização do painel Kolmeya
+                st.rerun()
             # --- COMPARAÇÃO DE TELEFONES DA BASE COM O RELATÓRIO DE STATUS ---
-            # Buscar todos os telefones do relatório de status
-            messages_status = obter_dados_sms(fixed_now)
-            telefones_status = set()
-            if messages_status:
-                df_status = pd.DataFrame(messages_status)
-                col_telefone_status = next((col for col in df_status.columns if col.lower() == 'telefone' or 'tel' in col.lower()), None)
-                if col_telefone_status:
-                    telefones_status = set(df_status[col_telefone_status].dropna().astype(str).map(limpar_telefone))
+            # Buscar todos os telefones do relatório de status (Kolmeya)
+            telefones_kolmeya = set()
+            for m in messages_fgts:
+                tel = m.get('telefone') if isinstance(m, dict) else None
+                if tel:
+                    telefones_kolmeya.add(limpar_telefone(tel))
             # Padronizar telefones da base
             telefones_base = set()
             if 'Telefone' in df_base.columns:
                 telefones_base = set(df_base['Telefone'].dropna().astype(str).map(limpar_telefone))
             # Comparar
-            telefones_iguais = telefones_base & telefones_status
-            st.markdown(f"<b>Total de telefones da base que aparecem no relatório de status:</b> <span style='color:#e0d7f7;font-weight:bold;'>{len(telefones_iguais)}</span>", unsafe_allow_html=True)
+            telefones_iguais = telefones_base & telefones_kolmeya
+            st.markdown(f"<b>Total de telefones da base que aparecem no Kolmeya:</b> <span style='color:#e0d7f7;font-weight:bold;'>{len(telefones_iguais)}</span>", unsafe_allow_html=True)
+            if telefones_iguais:
+                st.write("Telefones encontrados:")
+                st.write(sorted(telefones_iguais))
+                # Exibir CPFs correspondentes na base
+                if 'Telefone' in df_base.columns and 'CPF' in df_base.columns:
+                    df_cpfs_base = df_base[df_base['Telefone'].astype(str).map(limpar_telefone).isin(telefones_iguais)][['Telefone', 'CPF']]
+                    st.write("CPFs correspondentes na base:")
+                    st.dataframe(df_cpfs_base)
+                # Exibir CPFs correspondentes no Kolmeya
+                cpfs_kolmeya = []
+                for m in messages_fgts:
+                    tel = m.get('telefone') if isinstance(m, dict) else None
+                    cpf = m.get('cpf') if isinstance(m, dict) else None
+                    if tel and limpar_telefone(tel) in telefones_iguais:
+                        cpfs_kolmeya.append({'Telefone': limpar_telefone(tel), 'CPF': str(cpf).zfill(11) if cpf else None})
+                if cpfs_kolmeya:
+                    st.write("CPFs correspondentes no Kolmeya:")
+                    st.dataframe(pd.DataFrame(cpfs_kolmeya))
             # --- FIM COMPARAÇÃO ---
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
 
-    # --- RESUMO DOS JOBS KOLMEYA ---
-    st.markdown("<h3>Resumo dos Jobs Kolmeya</h3>", unsafe_allow_html=True)
-    st.info("A busca retorna todos os jobs do mês selecionado. O filtro por data é aplicado localmente.")
-    col_period, col_token = st.columns([1,2])
-    with col_period:
-        data_ini = st.date_input("Data inicial", value=datetime.now().replace(day=1).date(), key="data_ini")
-        data_fim = st.date_input("Data final", value=datetime.now().date(), key="data_fim")
-    with col_token:
-        token_input = st.text_input("Token Kolmeya (opcional, usa env se vazio)", value="", type="password")
-
-    periodo = data_ini.strftime('%Y-%m')
-    resultado_jobs = obter_resumo_jobs_kolmeya(periodo, token=token_input or None)
-    df_jobs = pd.DataFrame(resultado_jobs) if isinstance(resultado_jobs, list) else pd.DataFrame([resultado_jobs])
-    if 'centro_custo' in df_jobs.columns:
-        df_jobs = df_jobs[df_jobs['centro_custo'] == 'FGTS']
-    if 'data_hora_inicio' in df_jobs.columns:
-        df_jobs['data_hora_inicio'] = pd.to_datetime(df_jobs['data_hora_inicio'], errors='coerce')
-        mask = (df_jobs['data_hora_inicio'].dt.date >= data_ini) & (df_jobs['data_hora_inicio'].dt.date <= data_fim)
-        df_jobs = df_jobs[mask]
-    # Calcule leads_gerados exatamente sobre o DataFrame filtrado
-    leads_gerados = pd.to_numeric(df_jobs['acessos'], errors='coerce').fillna(0).astype(int).sum() if 'acessos' in df_jobs.columns else 0
-    st.dataframe(df_jobs)
-    st.session_state['leads_gerados'] = leads_gerados
-
-    # --- COMPARAÇÃO ENTRE JOBS DO RESUMO E DO RELATÓRIO DE STATUS ---
-    # (Removido: não faz mais comparação de jobs)
-    # --- BUSCAR TELEFONES DOS JOBS EM AMBOS ---
-    # (Removido: não faz mais exibição de telefones dos jobs em ambos)
-    # --- FIM BUSCA TELEFONES ---
-
-    # Libera memória dos DataFrames grandes após uso
     gc.collect()
 
 if __name__ == "__main__":
