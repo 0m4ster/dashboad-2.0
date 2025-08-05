@@ -6,4 +6,15 @@ services:
     startCommand: "bash start.sh"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.12 
+        value: 3.9.12
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: true
+      - key: STREAMLIT_SERVER_ENABLE_CORS
+        value: false
+      - key: STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION
+        value: false
+    healthCheckPath: /
+    autoDeploy: true
+    plan: starter 
