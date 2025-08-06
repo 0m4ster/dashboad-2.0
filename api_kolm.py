@@ -12,6 +12,7 @@ import urllib3
 import ssl
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 
 try:
     from streamlit_extras.streamlit_autorefresh import st_autorefresh
@@ -24,9 +25,12 @@ CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
 CUSTO_POR_LIGACAO_URA = 0.034444  # R$ 0,034444 por ligação URA
 
 # Constantes para os centros de custo do Kolmeya
-TENANT_SEGMENT_ID_FGTS = 8103  # FGTS conforme registro
-TENANT_SEGMENT_ID_CLT = 8208   # CRÉDITO CLT conforme registro
-TENANT_SEGMENT_ID_NOVO = 8105  # NOVO conforme registro
+TENANT_SEGMENT_ID_FGTS = "FGTS"  # FGTS conforme registro
+TENANT_SEGMENT_ID_CLT = "Crédito CLT"   # CRÉDITO CLT conforme registro
+TENANT_SEGMENT_ID_NOVO = "Novo"  # NOVO conforme registro
+
+# Debug: mostra os IDs configurados
+print(f"IDs configurados - NOVO: {TENANT_SEGMENT_ID_NOVO}, FGTS: {TENANT_SEGMENT_ID_FGTS}, CLT: {TENANT_SEGMENT_ID_CLT}")
 
 def get_week_range(now):
     start_of_week = now - timedelta(days=now.weekday())  # Segunda-feira
@@ -82,9 +86,14 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     
     hoje = datetime.now().date()
     if data_fim == hoje:
+        # Para hoje, usa o horário atual para incluir SMS enviados hoje
         end_at = datetime.now().strftime('%Y-%m-%d %H:%M')
     else:
+        # Para outras datas, usa o final do dia
         end_at = datetime.combine(data_fim, datetime.max.time()).strftime('%Y-%m-%d %H:%M')
+    
+    # Debug: mostra as datas sendo usadas
+    print(f"Consultando SMS de {start_at} até {end_at}")
     
     messages = consultar_status_sms_kolmeya(start_at, end_at, limit=30000, tenant_segment_id=tenant_segment_id)
     
@@ -113,12 +122,18 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
         body["tenant_segment_id"] = tenant_segment_id
     
     try:
+        print(f"Fazendo requisição para Kolmeya: {body}")
         resp = requests.post(url, headers=headers, json=body, timeout=30)
+        print(f"Status da resposta: {resp.status_code}")
+        
         if resp.status_code != 200:
+            print(f"Erro na resposta: {resp.text}")
             return []
+        
         resp.raise_for_status()
         data = resp.json()
         messages = data.get("messages", [])
+        print(f"Total de mensagens recebidas: {len(messages)}")
         
         if tenant_segment_id is not None and messages:
             messages_filtradas = []
@@ -126,13 +141,10 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
                 if isinstance(msg, dict):
                     msg_tenant_id = msg.get('tenant_segment_id')
                     if msg_tenant_id is not None:
-                        try:
-                            msg_tenant_id_int = int(msg_tenant_id)
-                            tenant_segment_id_int = int(tenant_segment_id)
-                            if msg_tenant_id_int == tenant_segment_id_int:
-                                messages_filtradas.append(msg)
-                        except (ValueError, TypeError):
-                            pass
+                        # Compara strings diretamente
+                        if str(msg_tenant_id) == str(tenant_segment_id):
+                            messages_filtradas.append(msg)
+            print(f"Mensagens filtradas por tenant_segment_id {tenant_segment_id}: {len(messages_filtradas)}")
             return messages_filtradas
         return messages
     except Exception as e:
@@ -176,8 +188,13 @@ def consultar_acessos_sms_kolmeya(start_at, end_at, limit=5000, token=None, tena
                     for access in accesses_list:
                         if isinstance(access, dict):
                             access_tenant_id = access.get('tenant_segment_id')
-                            if tenant_segment_id is None or access_tenant_id == tenant_segment_id:
+                            if tenant_segment_id is None:
+                                # Se não há filtro, conta todos
                                 total_accesses += 1
+                            elif access_tenant_id is not None:
+                                # Compara strings diretamente
+                                if str(access_tenant_id) == str(tenant_segment_id):
+                                    total_accesses += 1
         elif isinstance(data, dict):
             total_accesses = data.get("totalAccesses", 0)
         
@@ -342,18 +359,19 @@ def main():
 
     # Filtro de centro de custo
     centro_custo_opcoes = {
-        "NOVO": None,
-        "FGTS": TENANT_SEGMENT_ID_FGTS,
-        "CLT": TENANT_SEGMENT_ID_CLT
+        "TODOS": None,
+        "Novo": "Novo",
+        "Crédito CLT": "Crédito CLT",
+        "FGTS": "FGTS"
     }
     
     centro_custo_selecionado = st.selectbox(
         "Centro de Custo",
         options=list(centro_custo_opcoes.keys()),
-        index=0,
+        index=0,  # "TODOS" será a primeira opção
         key="centro_custo_filtro"
     )
-    tenant_segment_id_filtro = centro_custo_opcoes[centro_custo_selecionado]
+    centro_custo_valor = centro_custo_opcoes[centro_custo_selecionado]
 
     # Saldo Kolmeya
     col_saldo, col_vazio = st.columns([0.9, 4.1])
@@ -396,24 +414,50 @@ def main():
     with col1:
         # --- PAINEL KOLMEYA ---
         try:
-            messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id_filtro)
-            
-            if not messages:
-                quantidade_sms = 0
-                investimento = 0.0
-                telefones = []
-                cpfs = []
+            # Debug: mostra qual filtro está sendo aplicado
+            if centro_custo_valor is None:
+                st.info(f"🔍 Aplicando filtro: TODOS os centros de custo")
             else:
-                quantidade_sms = len(messages)
-                investimento = quantidade_sms * CUSTO_POR_ENVIO
-                telefones = []
-                for m in messages:
-                    tel = m.get('telefone') if isinstance(m, dict) else None
-                    if tel:
-                        telefones.append(limpar_telefone(tel))
-                cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
+                st.info(f"🔍 Aplicando filtro: {centro_custo_selecionado} (ID: {centro_custo_valor})")
             
-            # --- NOVOS NA CARTEIRA ---
+            messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, None)  # Não filtra na API
+            
+            # Mostra todos os valores únicos de centro_custo encontrados
+            centros_encontrados = set()
+            for m in messages:
+                if isinstance(m, dict):
+                    centros_encontrados.add(m.get('centro_custo'))
+            # st.info(f"Centros de custo encontrados nas mensagens: {centros_encontrados}")
+            
+            # Contagem de SMS por centro de custo
+            centros = [m.get('centro_custo') for m in messages if isinstance(m, dict)]
+            contagem_centros = Counter(centros)
+            
+            # Para exibir a quantidade de SMS do centro de custo selecionado:
+            if centro_custo_selecionado != "TODOS":
+                quantidade_sms = contagem_centros.get(centro_custo_valor, 0)
+            else:
+                quantidade_sms = sum(contagem_centros.values())
+            investimento = quantidade_sms * CUSTO_POR_ENVIO
+            
+            # Debug: mostra informações sobre os dados retornados
+            # st.info(f"📊 Total de mensagens SMS: {quantidade_sms} | Total de acessos: {total_acessos}")
+            
+            # Mapeamento de IDs para nomes dos centros de custo
+            centro_nomes = {
+                TENANT_SEGMENT_ID_NOVO: "NOVO",
+                TENANT_SEGMENT_ID_FGTS: "FGTS", 
+                TENANT_SEGMENT_ID_CLT: "CLT"
+            }
+            
+            # Exibe a contagem de SMS por centro de custo
+            st.markdown("<b>Quantidade de SMS por Centro de Custo:</b>", unsafe_allow_html=True)
+            for centro, qtd in contagem_centros.items():
+                nome_centro = centro_nomes.get(centro, centro)
+                st.markdown(f"<span style='color:#e0d7f7'>{nome_centro}: <b>{qtd}</b></span>", unsafe_allow_html=True)
+            
+            # Definir cpfs antes de usar
+            cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
             cpfs_unicos = set(cpfs)
             novos_na_carteira = total_acessos
             leads_gerados = novos_na_carteira
