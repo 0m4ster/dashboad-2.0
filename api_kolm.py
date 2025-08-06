@@ -416,7 +416,7 @@ def main():
         try:
             # Debug: mostra qual filtro está sendo aplicado
             if centro_custo_valor is None:
-                st.info(f"🔍 Aplicando filtro: TODOS os centros de custo")
+                pass # Remover mensagem de debug do filtro
             else:
                 st.info(f"🔍 Aplicando filtro: {centro_custo_selecionado} (ID: {centro_custo_valor})")
             
@@ -450,11 +450,7 @@ def main():
                 TENANT_SEGMENT_ID_CLT: "CLT"
             }
             
-            # Exibe a contagem de SMS por centro de custo
-            st.markdown("<b>Quantidade de SMS por Centro de Custo:</b>", unsafe_allow_html=True)
-            for centro, qtd in contagem_centros.items():
-                nome_centro = centro_nomes.get(centro, centro)
-                st.markdown(f"<span style='color:#e0d7f7'>{nome_centro}: <b>{qtd}</b></span>", unsafe_allow_html=True)
+            # Remover o loop que exibe cada centro de custo e sua contagem
             
             # Definir cpfs antes de usar
             cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
