@@ -1476,8 +1476,8 @@ def main():
     )
     centro_custo_valor = centro_custo_opcoes[centro_custo_selecionado]
 
-    # Saldo Kolmeya e Status Facta
-    col_saldo, col_facta_status, col_vazio = st.columns([0.9, 0.9, 3.2])
+    # Saldo Kolmeya
+    col_saldo, col_vazio = st.columns([0.9, 5.1])
     
     with col_saldo:
         saldo_kolmeya = obter_saldo_kolmeya()
@@ -1487,23 +1487,6 @@ def main():
                 <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Saldo Atual Kolmeya</div>
                 <div style='font-size: 2.5em; font-weight: bold; color: #fff;'>
                     {formatar_real(saldo_kolmeya)}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    
-    with col_facta_status:
-        token_facta = get_facta_token()
-        status_facta = "✅ Conectado" if token_facta else "❌ Desconectado"
-        cor_facta = "rgba(0, 128, 0, 0.9)" if token_facta else "rgba(255, 0, 0, 0.9)"
-        
-        st.markdown(
-            f"""
-            <div style='background: {cor_facta}; border: 2.5px solid rgba(255, 255, 255, 0.5); border-radius: 16px; padding: 24px 32px; color: #fff; min-width: 320px; min-height: 90px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 24px; display: flex; flex-direction: column; align-items: center;'>
-                <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Status Facta</div>
-                <div style='font-size: 1.8em; font-weight: bold; color: #fff;'>
-                    {status_facta}
                 </div>
             </div>
             """,
