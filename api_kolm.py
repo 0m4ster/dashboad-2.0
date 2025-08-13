@@ -2204,61 +2204,90 @@ def main():
         producao_segundo = 0.0
         roi_segundo = 0.0
 
-    # SALVAR MÉTRICAS NO BANCO DE DADOS
+        # SALVAR MÉTRICAS NO BANCO DE DADOS - SISTEMA MELHORADO
     if HAS_DATABASE:
         try:
-            # Preparar dados para salvar
+            # Garantir que todos os valores sejam numéricos e precisos
+            def safe_float(value, default=0.0):
+                """Converte valor para float de forma segura."""
+                try:
+                    if value is None or value == '':
+                        return default
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default
+            
+            def safe_int(value, default=0):
+                """Converte valor para int de forma segura."""
+                try:
+                    if value is None or value == '':
+                        return default
+                    return int(float(value))
+                except (ValueError, TypeError):
+                    return default
+            
+            # Preparar dados KOLMEYA com validação precisa
             dados_kolmeya = {
                 'canal': 'Kolmeya',
-                'sms_enviados': total_mensagens,
-                'interacoes': disparos_por_lead,
-                'investimento': investimento,
-                'taxa_entrega': taxa_entrega,
-                'total_vendas': total_vendas,
-                'producao': producao,
-                'leads_gerados': telefones_base,
-                'ticket_medio': ticket_medio,
-                'roi': roi
+                'sms_enviados': safe_int(total_mensagens),
+                'interacoes': safe_float(disparos_por_lead),
+                'investimento': safe_float(investimento),
+                'taxa_entrega': safe_float(taxa_entrega),
+                'total_vendas': safe_int(total_vendas),
+                'producao': safe_float(producao),
+                'leads_gerados': safe_int(telefones_base),
+                'ticket_medio': safe_float(ticket_medio),
+                'roi': safe_float(roi)
             }
             
+            # Preparar dados 4NET com validação precisa
             dados_4net = {
                 'canal': '4NET',
-                'sms_enviados': 0,
-                'interacoes': 0.0,
-                'investimento': total_investimento,
-                'taxa_entrega': 0.0,
-                'total_vendas': total_vendas_ura,
-                'producao': producao_ura,
-                'leads_gerados': telefones_base,
-                'ticket_medio': fat_med_venda,
-                'roi': roi_ura
+                'sms_enviados': safe_int(ura_count),  # Usar dados reais da URA
+                'interacoes': safe_float(ligacoes_realizadas),
+                'investimento': safe_float(total_investimento),
+                'taxa_entrega': safe_float(taxa_lead),
+                'total_vendas': safe_int(total_vendas_ura),
+                'producao': safe_float(producao_ura),
+                'leads_gerados': safe_int(telefones_base),
+                'ticket_medio': safe_float(fat_med_venda),
+                'roi': safe_float(roi_ura)
             }
             
+            # Preparar dados WhatsApp com validação precisa
             dados_whatsapp = {
                 'canal': 'WhatsApp',
-                'sms_enviados': campanhas_realizadas,
-                'interacoes': camp_atendidas,
-                'investimento': total_investimento_novo,
-                'taxa_entrega': tempo_medio_campanha,
-                'producao': producao_novo,
-                'total_vendas': total_vendas_novo,
-                'leads_gerados': total_engajados,
-                'ticket_medio': producao_novo/total_vendas_novo if total_vendas_novo > 0 else 0,
-                'roi': roi_novo
+                'sms_enviados': safe_int(campanhas_realizadas),
+                'interacoes': safe_float(camp_atendidas),
+                'investimento': safe_float(total_investimento_novo),
+                'taxa_entrega': safe_float(tempo_medio_campanha),
+                'total_vendas': safe_int(total_vendas_novo),
+                'producao': safe_float(producao_novo),
+                'leads_gerados': safe_int(total_engajados),
+                'ticket_medio': safe_float(producao_novo/total_vendas_novo if total_vendas_novo > 0 else 0),
+                'roi': safe_float(roi_novo)
             }
             
+            # Preparar dados AD com validação precisa
             dados_ad = {
                 'canal': 'AD',
-                'sms_enviados': acoes_realizadas,
-                'interacoes': acoes_efetivas,
-                'investimento': total_investimento_segundo,
-                'taxa_entrega': tempo_medio_acao,
-                'total_vendas': total_vendas_segundo,
-                'producao': producao_segundo,
-                'leads_gerados': total_efetivos,
-                'ticket_medio': producao_segundo/total_vendas_segundo if total_vendas_segundo > 0 else 0,
-                'roi': roi_segundo
+                'sms_enviados': safe_int(acoes_realizadas),
+                'interacoes': safe_float(acoes_efetivas),
+                'investimento': safe_float(total_investimento_segundo),
+                'taxa_entrega': safe_float(tempo_medio_acao),
+                'total_vendas': safe_int(total_vendas_segundo),
+                'producao': safe_float(producao_segundo),
+                'leads_gerados': safe_int(total_efetivos),
+                'ticket_medio': safe_float(producao_segundo/total_vendas_segundo if total_vendas_segundo > 0 else 0),
+                'roi': safe_float(roi_segundo)
             }
+            
+            # Log detalhado antes de salvar
+            print(f"💾 Salvando métricas precisas:")
+            print(f"   Kolmeya: SMS={dados_kolmeya['sms_enviados']}, Vendas={dados_kolmeya['total_vendas']}, Produção={dados_kolmeya['producao']}")
+            print(f"   4NET: SMS={dados_4net['sms_enviados']}, Vendas={dados_4net['total_vendas']}, Produção={dados_4net['producao']}")
+            print(f"   WhatsApp: SMS={dados_whatsapp['sms_enviados']}, Vendas={dados_whatsapp['total_vendas']}, Produção={dados_whatsapp['producao']}")
+            print(f"   AD: SMS={dados_ad['sms_enviados']}, Vendas={dados_ad['total_vendas']}, Produção={dados_ad['producao']}")
             
             # Salvar no banco de dados
             salvar_metricas_dashboard(
@@ -2266,8 +2295,12 @@ def main():
                 centro_custo_selecionado, data_ini, data_fim
             )
             
+            print(f"✅ Métricas salvas com sucesso - {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            
         except Exception as e:
-            print(f"⚠️ Erro ao salvar métricas no banco: {e}")
+            print(f"❌ Erro ao salvar métricas no banco: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Dashboard HTML usando st.components.html para melhor renderização
     import streamlit.components.v1 as components
