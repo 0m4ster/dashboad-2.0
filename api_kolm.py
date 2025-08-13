@@ -31,6 +31,9 @@ except ImportError:
 
 KOLMEYA_TOKEN_DIRETO = ""  # Coloque seu token aqui para testes
 
+# Token de teste da documentação (apenas para debug)
+KOLMEYA_TOKEN_TESTE = "4YyZFPMQHW0LZeKiGAqe705cLPweuJKIWFtKAyuj"
+
 # Função para obter o token da API
 def get_kolmeya_token():
     """Retorna o token da API do Kolmeya."""
@@ -42,6 +45,12 @@ def get_kolmeya_token():
         token = KOLMEYA_TOKEN_DIRETO
         print("⚠️ Usando token configurado diretamente no código (não recomendado para produção)")
     
+    # Se ainda não encontrou, usar token de teste (apenas para debug)
+    if not token:
+        token = KOLMEYA_TOKEN_TESTE
+        print("🧪 Usando token de teste da documentação (apenas para debug)")
+    
+    print(f"🔍 DEBUG - Token obtido: {token[:10]}..." if token else "🔍 DEBUG - Token não encontrado")
     return token
 
 # Função para obter o token da API da Facta
@@ -435,17 +444,77 @@ def obter_saldo_kolmeya(token=None):
             "Accept": "application/json"
         }
         
+        print(f"🔍 DEBUG - Testando conexão com API (saldo): {url}")
         resp = requests.get(url, headers=headers, timeout=30)
+        
+        print(f"🔍 DEBUG - Status da requisição de saldo: {resp.status_code}")
+        if resp.status_code != 200:
+            print(f"🔍 DEBUG - Erro na requisição de saldo: {resp.text}")
         
         if resp.status_code == 200:
             data = resp.json()
             saldo = data.get("balance", 0.0)
+            print(f"🔍 DEBUG - Saldo obtido: {saldo}")
             return float(saldo)
         else:
             return 0.0
             
     except Exception as e:
+        print(f"🔍 DEBUG - Erro ao obter saldo: {e}")
         return 0.0
+
+def testar_conexao_kolmeya():
+    """Testa a conexão com a API do Kolmeya."""
+    print("🧪 TESTE DE CONEXÃO COM API KOLMEYA")
+    
+    token = get_kolmeya_token()
+    if not token:
+        print("❌ Token não encontrado")
+        return False
+    
+    # Teste 1: Verificar saldo
+    saldo = obter_saldo_kolmeya(token)
+    print(f"💰 Saldo: {saldo}")
+    
+    # Teste 2: Fazer uma requisição de teste para o endpoint de status
+    try:
+        url = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        # Fazer uma requisição para os últimos 7 dias
+        data_atual = datetime.now()
+        data_7_dias_atras = data_atual - timedelta(days=7)
+        
+        body = {
+            "start_at": data_7_dias_atras.strftime('%Y-%m-%d 00:00'),
+            "end_at": data_atual.strftime('%Y-%m-%d %H:%M'),
+            "limit": 100  # Limitar para teste
+        }
+        
+        print(f"🧪 Testando requisição de status:")
+        print(f"   📤 Body: {body}")
+        
+        resp = requests.post(url, headers=headers, json=body, timeout=30)
+        
+        print(f"   📊 Status: {resp.status_code}")
+        print(f"   📋 Resposta: {resp.text[:500]}...")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            messages = data.get("messages", [])
+            print(f"   ✅ Sucesso! {len(messages)} mensagens encontradas")
+            return True
+        else:
+            print(f"   ❌ Erro na API: {resp.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"   ❌ Erro no teste: {e}")
+        return False
 
 def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     """Consulta o endpoint Kolmeya para status de SMS."""
@@ -462,6 +531,18 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     else:
         end_at = data_fim.strftime('%Y-%m-%d 23:59')
         print(f"🔍 DEBUG - Data final não é hoje, usando 23:59: {end_at}")
+    
+    # Verificar se o período é válido (não pode ser futuro)
+    current_time = datetime.now()
+    start_dt = datetime.strptime(start_at, '%Y-%m-%d %H:%M')
+    end_dt = datetime.strptime(end_at, '%Y-%m-%d %H:%M')
+    
+    if end_dt > current_time:
+        print(f"⚠️ DEBUG - Período final é futuro, ajustando para horário atual")
+        end_at = current_time.strftime('%Y-%m-%d %H:%M')
+        print(f"🔍 DEBUG - Novo end_at: {end_at}")
+    
+    print(f"🔍 DEBUG - Período final para consulta: {start_at} a {end_at}")
     
     print(f"🔍 Consultando API real do Kolmeya:")
     print(f"   📅 Período: {start_at} a {end_at}")
@@ -494,6 +575,9 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
         print("❌ Token do Kolmeya não encontrado")
         return []
     
+    # Teste adicional: verificar se o token é válido
+    print(f"🔍 DEBUG - Verificando token: {token[:20]}..." if len(token) > 20 else f"🔍 DEBUG - Token: {token}")
+    
     # Verificar se o período não excede 7 dias
     try:
         start_dt = datetime.strptime(start_at, '%Y-%m-%d %H:%M')
@@ -521,13 +605,23 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
     }
     
     try:
+        print(f"🔍 DEBUG - Fazendo requisição para a API:")
+        print(f"   🌐 URL: {url}")
+        print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Nenhum")
+        print(f"   📤 Body: {body}")
+        
         resp = requests.post(url, headers=headers, json=body, timeout=30)
+        
+        print(f"🔍 DEBUG - Resposta da API:")
+        print(f"   📊 Status Code: {resp.status_code}")
+        print(f"   📋 Headers: {dict(resp.headers)}")
         
         if resp.status_code == 200:
             data = resp.json()
             messages = data.get("messages", [])
             
             print(f"✅ Resposta recebida: {len(messages)} mensagens")
+            print(f"🔍 DEBUG - Resposta completa: {data}")
             
             # Debug: Verificar detalhes da resposta
             if messages and len(messages) > 0:
@@ -540,6 +634,10 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
                 print(f"   📋 Status da primeira: {messages[0].get('status', 'N/A')}")
             else:
                 print(f"⚠️ DEBUG - Nenhuma mensagem retornada para o período: {start_at} a {end_at}")
+                print(f"🔍 DEBUG - Resposta vazia ou sem mensagens: {data}")
+        else:
+            print(f"❌ DEBUG - Erro na API: Status {resp.status_code}")
+            print(f"🔍 DEBUG - Resposta de erro: {resp.text}")
             
             # Filtrar por centro de custo se especificado
             if tenant_segment_id and messages:
@@ -839,6 +937,11 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     print(f"   📅 Data final: {data_fim} -> {data_fim_dt}")
     print(f"   📊 Mensagens antes do filtro: {len(messages)}")
     
+    # Se estamos filtrando para o dia atual, ser menos restritivo
+    is_current_day = data_fim == datetime.now().date()
+    if is_current_day:
+        print(f"🔍 DEBUG - Filtrando para o dia atual, sendo menos restritivo")
+    
     mensagens_filtradas = []
     mensagens_processadas = 0
     
@@ -862,6 +965,11 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
                             if mensagens_processadas <= 5:  # Mostrar apenas as primeiras 5 para debug
                                 print(f"   ❌ Mensagem fora do período: {data_str} (criada em {data_criacao})")
                                 print(f"      Comparação: {data_ini_dt} <= {data_criacao} <= {data_fim_dt}")
+                                
+                                # Se é o dia atual e a mensagem é de hoje, incluir mesmo assim
+                                if is_current_day and data_criacao.date() == datetime.now().date():
+                                    print(f"   🔄 Incluindo mensagem do dia atual mesmo fora do período exato")
+                                    mensagens_filtradas.append(msg)
                 except (ValueError, TypeError) as e:
                     print(f"   ⚠️ Erro ao processar data '{data_str}': {e}")
                     continue
@@ -1486,8 +1594,22 @@ def main():
     if HAS_AUTOREFRESH:
         st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")
     
+    # Testar conexão com a API do Kolmeya
+    print("🔍 Iniciando teste de conexão com API Kolmeya...")
+    testar_conexao_kolmeya()
+    
     # Adicionar teste de ambiente na sidebar
     test_environment_status()
+    
+    # Botão para testar conexão com API
+    if st.sidebar.button("🧪 Testar API Kolmeya"):
+        with st.sidebar:
+            st.info("Testando conexão...")
+            resultado = testar_conexao_kolmeya()
+            if resultado:
+                st.success("✅ Conexão OK!")
+            else:
+                st.error("❌ Erro na conexão")
     
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
