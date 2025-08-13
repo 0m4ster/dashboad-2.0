@@ -458,12 +458,15 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     # Se a data final for hoje, usar o horário atual para pegar dados em tempo real
     if data_fim == datetime.now().date():
         end_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+        print(f"🔍 DEBUG - Data final é hoje, usando horário atual: {end_at}")
     else:
         end_at = data_fim.strftime('%Y-%m-%d 23:59')
+        print(f"🔍 DEBUG - Data final não é hoje, usando 23:59: {end_at}")
     
     print(f"🔍 Consultando API real do Kolmeya:")
     print(f"   📅 Período: {start_at} a {end_at}")
     print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    print(f"   🕐 Horário atual: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     
     # Consulta real à API
     try:
@@ -837,6 +840,7 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     print(f"   📊 Mensagens antes do filtro: {len(messages)}")
     
     mensagens_filtradas = []
+    mensagens_processadas = 0
     
     for msg in messages:
         if isinstance(msg, dict):
@@ -847,15 +851,22 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
                     # Formato: DD/MM/YYYY HH:MM
                     if len(data_str) >= 16 and '/' in data_str:
                         data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                        mensagens_processadas += 1
                         
                         # Se está no período, inclui a mensagem
                         if data_ini_dt <= data_criacao <= data_fim_dt:
                             mensagens_filtradas.append(msg)
+                            if mensagens_processadas <= 5:  # Mostrar apenas as primeiras 5 para debug
+                                print(f"   ✅ Mensagem incluída: {data_str} (criada em {data_criacao})")
                         else:
-                            print(f"   ❌ Mensagem fora do período: {data_str} (criada em {data_criacao})")
-                except (ValueError, TypeError):
+                            if mensagens_processadas <= 5:  # Mostrar apenas as primeiras 5 para debug
+                                print(f"   ❌ Mensagem fora do período: {data_str} (criada em {data_criacao})")
+                                print(f"      Comparação: {data_ini_dt} <= {data_criacao} <= {data_fim_dt}")
+                except (ValueError, TypeError) as e:
+                    print(f"   ⚠️ Erro ao processar data '{data_str}': {e}")
                     continue
     
+    print(f"   📊 Mensagens processadas: {mensagens_processadas}")
     print(f"   📊 Mensagens após filtro: {len(mensagens_filtradas)}")
     return mensagens_filtradas
 
@@ -1558,15 +1569,20 @@ def main():
     print(f"🔍 Consultando API Kolmeya:")
     print(f"   📅 Período: {data_ini} a {data_fim}")
     print(f"   🏢 Centro de custo: {centro_custo_selecionado}")
+    print(f"   🕐 Data atual: {datetime.now().date()}")
+    print(f"   🔍 É dia atual? {data_fim == datetime.now().date()}")
     
     messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, centro_custo_valor)
     
     # Filtrar mensagens por data após receber da API
     if messages:
+        print(f"📊 Mensagens recebidas da API: {len(messages)}")
         messages = filtrar_mensagens_por_data(messages, data_ini, data_fim)
         print(f"📅 Após filtro por data: {len(messages)} mensagens")
+    else:
+        print(f"⚠️ Nenhuma mensagem recebida da API")
     
-    print(f"📊 Resultado: {len(messages) if messages else 0} SMS, {total_acessos} acessos")
+    print(f"📊 Resultado final: {len(messages) if messages else 0} SMS, {total_acessos} acessos")
     
     # CALCULAR LEADS GERADOS ANTES DA RENDERIZAÇÃO DO HTML
     total_leads_gerados = 0
