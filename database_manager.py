@@ -4,14 +4,48 @@ from datetime import datetime, timedelta
 import os
 from typing import Dict, List, Optional, Tuple
 
+# Importar configurações
+try:
+    from config import Config
+    HAS_CONFIG = True
+except ImportError:
+    HAS_CONFIG = False
+    print("⚠️ Módulo de configuração não encontrado. Usando SQLite local.")
+
+# Tentar importar PostgreSQL para Render
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    HAS_POSTGRESQL = True
+except ImportError:
+    HAS_POSTGRESQL = False
+    print("⚠️ Módulo PostgreSQL não encontrado. Usando SQLite local.")
+
 class DashboardDatabase:
-    def __init__(self, db_path: str = "dashboard.db"):
+    def __init__(self, db_path: str = None):
         """Inicializa o gerenciador do banco de dados."""
-        self.db_path = db_path
+        if HAS_CONFIG and Config.is_production():
+            # Render - PostgreSQL
+            self.db_type = 'postgresql'
+            self.connection_string = Config.DATABASE_URL
+            print(f"🌐 Conectando ao PostgreSQL no Render...")
+        else:
+            # Local - SQLite
+            self.db_type = 'sqlite'
+            self.db_path = db_path or "dashboard.db"
+            print(f"🏠 Conectando ao SQLite local: {self.db_path}")
+        
         self.init_database()
     
     def init_database(self):
         """Inicializa o banco de dados e cria as tabelas necessárias."""
+        if self.db_type == 'postgresql':
+            self._init_postgresql()
+        else:
+            self._init_sqlite()
+    
+    def _init_sqlite(self):
+        """Inicializa banco SQLite local."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -72,12 +106,94 @@ class DashboardDatabase:
         
         conn.commit()
         conn.close()
-        print(f"✅ Banco de dados inicializado: {self.db_path}")
+        print(f"✅ Banco SQLite inicializado: {self.db_path}")
+    
+    def _init_postgresql(self):
+        """Inicializa banco PostgreSQL no Render."""
+        try:
+            conn = psycopg2.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Tabela principal de métricas
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS metricas_dashboard (
+                id SERIAL PRIMARY KEY,
+                canal VARCHAR(50) NOT NULL,
+                sms_enviados INTEGER DEFAULT 0,
+                interacoes DECIMAL(10,2) DEFAULT 0.0,
+                investimento DECIMAL(12,2) DEFAULT 0.0,
+                taxa_entrega DECIMAL(5,2) DEFAULT 0.0,
+                total_vendas INTEGER DEFAULT 0,
+                producao DECIMAL(12,2) DEFAULT 0.0,
+                leads_gerados INTEGER DEFAULT 0,
+                ticket_medio DECIMAL(12,2) DEFAULT 0.0,
+                roi DECIMAL(12,2) DEFAULT 0.0,
+                data_coleta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                centro_custo VARCHAR(50) DEFAULT 'TODOS',
+                periodo_inicio DATE,
+                periodo_fim DATE
+            )
+            """)
+            
+            # Tabela para histórico de consultas da Facta
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consultas_facta (
+                id SERIAL PRIMARY KEY,
+                canal VARCHAR(50) NOT NULL,
+                cpfs_consultados INTEGER DEFAULT 0,
+                propostas_encontradas INTEGER DEFAULT 0,
+                valor_total_propostas DECIMAL(12,2) DEFAULT 0.0,
+                taxa_conversao DECIMAL(5,2) DEFAULT 0.0,
+                data_consulta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                centro_custo VARCHAR(50) DEFAULT 'TODOS',
+                periodo_inicio DATE,
+                periodo_fim DATE
+            )
+            """)
+            
+            # Tabela para configurações do sistema
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS configuracoes (
+                chave VARCHAR(100) PRIMARY KEY,
+                valor TEXT,
+                descricao TEXT,
+                data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+            
+            # Inserir configurações padrão
+            cursor.execute("""
+            INSERT INTO configuracoes (chave, valor, descricao) VALUES 
+            ('ultima_atualizacao', '', 'Data da última atualização do dashboard'),
+            ('versao_sistema', '1.0', 'Versão atual do sistema'),
+            ('retencao_dados_dias', '90', 'Dias para reter dados históricos')
+            ON CONFLICT (chave) DO NOTHING
+            """)
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ Banco PostgreSQL inicializado no Render")
+            
+        except Exception as e:
+            print(f"❌ Erro ao inicializar PostgreSQL: {e}")
+            print("🔄 Fallback para SQLite local...")
+            self.db_type = 'sqlite'
+            self.db_path = "dashboard.db"
+            self._init_sqlite()
     
     def salvar_metricas(self, dados: Dict, centro_custo: str = "TODOS", 
                         periodo_inicio: Optional[datetime] = None, 
                         periodo_fim: Optional[datetime] = None) -> bool:
         """Salva as métricas do dashboard no banco de dados."""
+        if self.db_type == 'postgresql':
+            return self._salvar_metricas_postgresql(dados, centro_custo, periodo_inicio, periodo_fim)
+        else:
+            return self._salvar_metricas_sqlite(dados, centro_custo, periodo_inicio, periodo_fim)
+    
+    def _salvar_metricas_sqlite(self, dados: Dict, centro_custo: str = "TODOS", 
+                                periodo_inicio: Optional[datetime] = None, 
+                                periodo_fim: Optional[datetime] = None) -> bool:
+        """Salva métricas no SQLite local."""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -116,11 +232,60 @@ class DashboardDatabase:
             conn.commit()
             conn.close()
             
-            print(f"✅ Métricas salvas para {dados_insert['canal']} - {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            print(f"✅ Métricas salvas no SQLite para {dados_insert['canal']} - {datetime.now().strftime('%d/%m/%Y %H:%M')}")
             return True
             
         except Exception as e:
-            print(f"❌ Erro ao salvar métricas: {e}")
+            print(f"❌ Erro ao salvar métricas no SQLite: {e}")
+            return False
+    
+    def _salvar_metricas_postgresql(self, dados: Dict, centro_custo: str = "TODOS", 
+                                    periodo_inicio: Optional[datetime] = None, 
+                                    periodo_fim: Optional[datetime] = None) -> bool:
+        """Salva métricas no PostgreSQL do Render."""
+        try:
+            conn = psycopg2.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Preparar dados para inserção
+            dados_insert = {
+                'canal': dados.get('canal', ''),
+                'sms_enviados': dados.get('sms_enviados', 0),
+                'interacoes': dados.get('interacoes', 0.0),
+                'investimento': dados.get('investimento', 0.0),
+                'taxa_entrega': dados.get('taxa_entrega', 0.0),
+                'total_vendas': dados.get('total_vendas', 0),
+                'producao': dados.get('producao', 0.0),
+                'leads_gerados': dados.get('leads_gerados', 0),
+                'ticket_medio': dados.get('ticket_medio', 0.0),
+                'roi': dados.get('roi', 0.0),
+                'centro_custo': centro_custo,
+                'periodo_inicio': periodo_inicio.date() if periodo_inicio else None,
+                'periodo_fim': periodo_fim.date() if periodo_fim else None
+            }
+            
+            cursor.execute("""
+            INSERT INTO metricas_dashboard (
+                canal, sms_enviados, interacoes, investimento, taxa_entrega,
+                total_vendas, producao, leads_gerados, ticket_medio, roi,
+                centro_custo, periodo_inicio, periodo_fim
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                dados_insert['canal'], dados_insert['sms_enviados'], dados_insert['interacoes'],
+                dados_insert['investimento'], dados_insert['taxa_entrega'], dados_insert['total_vendas'],
+                dados_insert['producao'], dados_insert['leads_gerados'], dados_insert['ticket_medio'],
+                dados_insert['roi'], dados_insert['centro_custo'], dados_insert['periodo_inicio'],
+                dados_insert['periodo_fim']
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"✅ Métricas salvas no PostgreSQL para {dados_insert['canal']} - {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Erro ao salvar métricas no PostgreSQL: {e}")
             return False
     
     def salvar_consulta_facta(self, dados: Dict, centro_custo: str = "TODOS",

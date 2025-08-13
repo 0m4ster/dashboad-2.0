@@ -1,20 +1,39 @@
 services:
+  # Dashboard Principal
   - type: web
-    name: dashboard-servix
+    name: dashboard-kolmeya
     env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "bash start.sh"
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run api_kolm.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.12
-      - key: PYTHONUNBUFFERED
-        value: 1
-      - key: STREAMLIT_SERVER_HEADLESS
+        value: 3.9.16
+      - key: RENDER
         value: true
-      - key: STREAMLIT_SERVER_ENABLE_CORS
-        value: false
-      - key: STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION
-        value: false
-    healthCheckPath: /
-    autoDeploy: true
-    plan: starter 
+      - key: RETENCAO_DIAS
+        value: 90
+
+  # Analytics Dashboard
+  - type: web
+    name: dashboard-analytics
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run dashboard_analytics.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: RENDER
+        value: true
+      - key: RETENCAO_DIAS
+        value: 90
+
+  # Banco de Dados PostgreSQL
+  - type: pserv
+    name: dashboard-database
+    env: postgresql
+    plan: free
+    ipAllowList: []
+    maxConnections: 5
+    maintenanceWindow: sun:00:00-sun:01:00 

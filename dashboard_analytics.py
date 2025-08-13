@@ -112,35 +112,68 @@ def main():
         stats = db.obter_estatisticas_gerais()
         st.metric("💾 Tamanho DB", f"{stats.get('tamanho_banco_mb', 0)} MB")
     
+    # Mensagem informativa
+    if stats.get('total_metricas', 0) == 0:
+        st.warning("⚠️ **Banco de dados vazio!** Para ver dados históricos, execute o dashboard principal primeiro e faça upload de arquivos.")
+        st.info("📋 **Como usar:** 1) Execute `streamlit run api_kolm.py` 2) Faça upload de arquivos 3) Volte aqui para ver o histórico")
+    else:
+        st.success(f"✅ Banco de dados com {stats.get('total_metricas', 0)} métricas salvas. Última atualização: {stats.get('ultima_atualizacao', 'N/A')}")
+    
     # Métricas gerais
     st.markdown("### 📈 Métricas Gerais")
     
     metricas_gerais = db.obter_metricas_gerais(data_inicio, data_fim, centro_custo_selecionado)
     
-    if metricas_gerais and metricas_gerais.get('totais'):
+    if metricas_gerais and metricas_gerais.get('totais') and len(metricas_gerais['totais']) > 0:
         totais = metricas_gerais['totais']
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            st.metric("📱 Total SMS", f"{totais.get('total_sms', 0):,}")
+            total_sms = totais.get('total_sms', 0) or 0
+            st.metric("📱 Total SMS", f"{total_sms:,}")
         
         with col2:
-            st.metric("💰 Total Produção", f"R$ {totais.get('total_producao', 0):,.2f}")
+            total_producao = totais.get('total_producao', 0) or 0
+            st.metric("💰 Total Produção", f"R$ {total_producao:,.2f}")
         
         with col3:
-            st.metric("💵 Total Investimento", f"R$ {totais.get('total_investimento', 0):,.2f}")
+            total_investimento = totais.get('total_investimento', 0) or 0
+            st.metric("💵 Total Investimento", f"R$ {total_investimento:,.2f}")
         
         with col4:
-            st.metric("📊 Total ROI", f"R$ {totais.get('total_roi', 0):,.2f}")
+            total_roi = totais.get('total_roi', 0) or 0
+            st.metric("📊 Total ROI", f"R$ {total_roi:,.2f}")
         
         with col5:
-            st.metric("🎯 Ticket Médio", f"R$ {totais.get('ticket_medio_geral', 0):,.2f}")
+            ticket_medio = totais.get('ticket_medio_geral', 0) or 0
+            st.metric("🎯 Ticket Médio", f"R$ {ticket_medio:,.2f}")
+    else:
+        # Mostrar mensagem quando não há dados
+        st.info("📭 Nenhuma métrica encontrada para o período selecionado. Execute o dashboard principal primeiro para gerar dados.")
+        
+        # Métricas zeradas para demonstração
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.metric("📱 Total SMS", "0")
+        
+        with col2:
+            st.metric("💰 Total Produção", "R$ 0,00")
+        
+        with col3:
+            st.metric("💵 Total Investimento", "R$ 0,00")
+        
+        with col4:
+            st.metric("📊 Total ROI", "R$ 0,00")
+        
+        with col5:
+            st.metric("🎯 Ticket Médio", "R$ 0,00")
     
     # Gráficos por canal
     st.markdown("### 📊 Análise por Canal")
     
-    if metricas_gerais and metricas_gerais.get('por_canal'):
+    if metricas_gerais and metricas_gerais.get('por_canal') and len(metricas_gerais['por_canal']) > 0:
         df_canal = pd.DataFrame(metricas_gerais['por_canal'])
         
         # Gráfico de produção por canal
@@ -181,6 +214,8 @@ def main():
             )
             fig_investimento.update_layout(showlegend=False)
             st.plotly_chart(fig_investimento, use_container_width=True)
+    else:
+        st.info("📊 Nenhum dado disponível para gerar gráficos. Execute o dashboard principal primeiro para gerar métricas.")
     
     # Tabela detalhada de métricas
     st.markdown("### 📋 Métricas Detalhadas")
