@@ -485,7 +485,7 @@ def testar_conexao_kolmeya():
             "Accept": "application/json"
         }
         
-        # Fazer uma requisição para os últimos 7 dias
+        # Fazer uma requisição para um período específico (últimos 7 dias)
         data_atual = datetime.now()
         data_7_dias_atras = data_atual - timedelta(days=7)
         
@@ -496,11 +496,16 @@ def testar_conexao_kolmeya():
         else:
             end_time = data_atual
         
+        # Teste adicional: tentar um período mais específico
+        data_3_dias_atras = data_atual - timedelta(days=3)
+        
         body = {
-            "start_at": data_7_dias_atras.strftime('%Y-%m-%d 00:00'),
+            "start_at": data_3_dias_atras.strftime('%Y-%m-%d 00:00'),
             "end_at": end_time.strftime('%Y-%m-%d %H:%M'),
             "limit": 100  # Limitar para teste
         }
+        
+        print(f"🧪 Testando período: {data_3_dias_atras.strftime('%Y-%m-%d')} a {end_time.strftime('%Y-%m-%d %H:%M')}")
         
         print(f"🧪 Testando requisição de status:")
         print(f"   📤 Body: {body}")
@@ -514,6 +519,13 @@ def testar_conexao_kolmeya():
             data = resp.json()
             messages = data.get("messages", [])
             print(f"   ✅ Sucesso! {len(messages)} mensagens encontradas")
+            
+            # Mostrar algumas mensagens de exemplo se houver
+            if messages and len(messages) > 0:
+                print(f"   📅 Primeira mensagem: {messages[0].get('enviada_em', 'N/A')}")
+                print(f"   📅 Última mensagem: {messages[-1].get('enviada_em', 'N/A')}")
+                print(f"   🏢 Centro de custo da primeira: {messages[0].get('centro_custo', 'N/A')}")
+            
             return True
         else:
             print(f"   ❌ Erro na API: {resp.status_code}")
@@ -549,6 +561,9 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
         print(f"🔍 DEBUG - Data final não é hoje, usando 23:59: {end_at}")
     
     print(f"🔍 DEBUG - Período final para consulta: {start_at} a {end_at}")
+    print(f"🔍 DEBUG - Horário atual: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"🔍 DEBUG - Data final selecionada: {data_fim}")
+    print(f"🔍 DEBUG - É dia atual? {data_fim == datetime.now().date()}")
     
     print(f"🔍 Consultando API real do Kolmeya:")
     print(f"   📅 Período: {start_at} a {end_at}")
@@ -1617,6 +1632,31 @@ def main():
                 st.success("✅ Conexão OK!")
             else:
                 st.error("❌ Erro na conexão")
+    
+    # Botão para testar diferentes períodos
+    if st.sidebar.button("🔍 Testar Períodos"):
+        with st.sidebar:
+            st.info("Testando diferentes períodos...")
+            
+            # Teste 1: Últimos 3 dias
+            data_atual = datetime.now()
+            data_3_dias_atras = data_atual - timedelta(days=3)
+            max_allowed_time = data_atual.replace(hour=13, minute=55, second=0, microsecond=0)
+            
+            if data_atual > max_allowed_time:
+                end_time = max_allowed_time
+            else:
+                end_time = data_atual
+            
+            st.text(f"Período 1: {data_3_dias_atras.strftime('%Y-%m-%d')} a {end_time.strftime('%Y-%m-%d %H:%M')}")
+            
+            # Teste 2: Última semana
+            data_7_dias_atras = data_atual - timedelta(days=7)
+            st.text(f"Período 2: {data_7_dias_atras.strftime('%Y-%m-%d')} a {end_time.strftime('%Y-%m-%d %H:%M')}")
+            
+            # Teste 3: Mês passado
+            data_30_dias_atras = data_atual - timedelta(days=30)
+            st.text(f"Período 3: {data_30_dias_atras.strftime('%Y-%m-%d')} a {end_time.strftime('%Y-%m-%d %H:%M')}")
     
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
