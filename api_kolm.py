@@ -5,22 +5,63 @@ from datetime import datetime, timedelta, date
 import re
 import pandas as pd
 import io
-import gc
 import json
 import time
-import urllib3
-import ssl
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
+import ssl
+
+# Importar gerenciador de banco de dados
+try:
+    from database_manager import DashboardDatabase, salvar_metricas_dashboard
+    HAS_DATABASE = True
+except ImportError:
+    HAS_DATABASE = False
+    print("⚠️ Módulo de banco de dados não encontrado. As métricas não serão salvas.")
 
 try:
     from streamlit_extras.streamlit_autorefresh import st_autorefresh
     HAS_AUTOREFRESH = True
 except ImportError:
     HAS_AUTOREFRESH = False
+
+# Configuração da API Kolmeya
+
+KOLMEYA_TOKEN_DIRETO = ""  # Coloque seu token aqui para testes
+
+# Função para obter o token da API
+def get_kolmeya_token():
+    """Retorna o token da API do Kolmeya."""
+    # Primeiro tenta variável de ambiente
+    token = os.environ.get("KOLMEYA_TOKEN", "")
+    
+    # Se não encontrar, tenta configuração direta
+    if not token and KOLMEYA_TOKEN_DIRETO:
+        token = KOLMEYA_TOKEN_DIRETO
+        print("⚠️ Usando token configurado diretamente no código (não recomendado para produção)")
+    
+    return token
+
+# Função para obter o token da API da Facta
+def get_facta_token():
+    """Retorna o token da API da Facta."""
+    # Primeiro tenta variável de ambiente
+    token = os.environ.get("FACTA_TOKEN", "")
+    
+    # Se não encontrar, tenta ler do arquivo
+    if not token:
+        try:
+            with open("facta_token.txt", "r") as f:
+                token = f.read().strip()
+                print("✅ Token da Facta lido do arquivo")
+        except FileNotFoundError:
+            print("❌ Arquivo facta_token.txt não encontrado")
+        except Exception as e:
+            print(f"❌ Erro ao ler token da Facta: {e}")
+    
+    return token
 
 # Configurações
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -29,9 +70,6 @@ CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
 TENANT_SEGMENT_ID_FGTS = "FGTS"  # FGTS conforme registro
 TENANT_SEGMENT_ID_CLT = "Crédito CLT"   # CRÉDITO CLT conforme registro
 TENANT_SEGMENT_ID_NOVO = "Novo"  # NOVO conforme registro
-
-# Debug: mostra os IDs configurados
-print(f"IDs configurados - NOVO: {TENANT_SEGMENT_ID_NOVO}, FGTS: {TENANT_SEGMENT_ID_FGTS}, CLT: {TENANT_SEGMENT_ID_CLT}")
 
 class TLSAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
@@ -63,8 +101,58 @@ def limpar_telefone(telefone):
         return t[-11:]
     return ""
 
-def extrair_telefones_da_base(df):
-    """Extrai e limpa todos os números de telefone da base carregada."""
+def limpar_cpf(cpf):
+    """Limpa e valida CPF, preservando zeros à esquerda quando necessário."""
+    if not cpf:
+        return ""
+    
+    # Remove caracteres não numéricos
+    cpf_limpo = re.sub(r'\D', '', str(cpf))
+    
+    # Se tem exatamente 11 dígitos, retorna como está
+    if len(cpf_limpo) == 11:
+        return cpf_limpo
+    
+    # Se tem menos de 11 dígitos, adiciona zeros à esquerda
+    if len(cpf_limpo) < 11:
+        return cpf_limpo.zfill(11)
+    
+    # Se tem mais de 11 dígitos, pega os 11 últimos
+    if len(cpf_limpo) > 11:
+        return cpf_limpo[-11:]
+    
+    return ""
+
+def validar_cpf(cpf):
+    """Valida se um CPF é válido (algoritmo de validação)."""
+    if not cpf or len(cpf) != 11:
+        return False
+    
+    # Verifica se todos os dígitos são iguais (CPF inválido)
+    if cpf == cpf[0] * 11:
+        return False
+    
+    # Calcula os dígitos verificadores
+    soma = 0
+    for i in range(9):
+        soma += int(cpf[i]) * (10 - i)
+    
+    resto = soma % 11
+    digito1 = 0 if resto < 2 else 11 - resto
+    
+    soma = 0
+    for i in range(10):
+        soma += int(cpf[i]) * (11 - i)
+    
+    resto = soma % 11
+    digito2 = 0 if resto < 2 else 11 - resto
+    
+    return cpf[-2:] == f"{digito1}{digito2}"
+
+
+
+def extrair_telefones_da_base(df, data_ini=None, data_fim=None):
+    """Extrai e limpa todos os números de telefone da base carregada, opcionalmente filtrados por data."""
     telefones = set()
     
     # Procura por colunas que podem conter telefones
@@ -78,11 +166,57 @@ def extrair_telefones_da_base(df):
     if not colunas_telefone:
         colunas_telefone = df.columns.tolist()
     
-    for col in colunas_telefone:
-        for valor in df[col].dropna():
-            telefone_limpo = limpar_telefone(valor)
-            if telefone_limpo and len(telefone_limpo) == 11:
-                telefones.add(telefone_limpo)
+    # Procura por colunas de data
+    colunas_data = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+            colunas_data.append(col)
+    
+    for idx, row in df.iterrows():
+        # Verifica se está no período de data (se especificado)
+        if data_ini and data_fim and colunas_data:
+            data_valida = False
+            for col in colunas_data:
+                try:
+                    data_str = str(row[col])
+                    if pd.notna(data_str) and data_str.strip():
+                        # Tenta diferentes formatos de data
+                        data_criacao = None
+                        
+                        # Formato: DD/MM/YYYY HH:MM
+                        if len(data_str) >= 16 and '/' in data_str:
+                            data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                        # Formato: DD/MM/YYYY
+                        elif len(data_str) == 10 and '/' in data_str:
+                            data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
+                        # Formato: YYYY-MM-DD HH:MM:SS
+                        elif len(data_str) >= 19:
+                            data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                        # Formato: YYYY-MM-DD
+                        elif len(data_str) == 10:
+                            data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
+                        
+                        if data_criacao:
+                            data_ini_dt = datetime.combine(data_ini, datetime.min.time())
+                            data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                            if data_ini_dt <= data_criacao <= data_fim_dt:
+                                data_valida = True
+                                break
+                except (ValueError, TypeError):
+                    continue
+            
+            # Se não está no período, pula este registro
+            if not data_valida:
+                continue
+        
+        # Extrai telefones das colunas
+        for col in colunas_telefone:
+            valor = row[col] if col in row else None
+            if valor is not None:
+                telefone_limpo = limpar_telefone(valor)
+                if telefone_limpo and len(telefone_limpo) == 11:
+                    telefones.add(telefone_limpo)
     
     return telefones
 
@@ -92,43 +226,12 @@ def extrair_telefones_kolmeya(messages):
     
     for msg in messages:
         if isinstance(msg, dict):
-            # Procura por campos que podem conter telefone
-            campos_telefone = ['phone', 'telefone', 'mobile', 'celular', 'number', 'numero', 'cpf', 'phone_number']
-            telefone_encontrado = False
-            
-            for campo in campos_telefone:
-                if campo in msg and msg[campo] is not None:
-                    valor = msg[campo]
-                    valor_str = str(valor).strip()
-                    
-                    # Se o campo for 'cpf', pode conter telefone em alguns casos
-                    if campo == 'cpf' and valor_str:
-                        # Verifica se o valor parece ser um telefone (11 dígitos)
-                        if len(valor_str) == 11 and valor_str.isdigit():
-                            telefone_limpo = limpar_telefone(valor_str)
-                            if telefone_limpo and len(telefone_limpo) == 11:
-                                telefones.add(telefone_limpo)
-                                telefone_encontrado = True
-                                break
-                    else:
-                        # Para outros campos, tenta limpar o telefone
-                        telefone_limpo = limpar_telefone(valor_str)
-                        if telefone_limpo and len(telefone_limpo) == 11:
-                            telefones.add(telefone_limpo)
-                            telefone_encontrado = True
-                            break
-            
-            # Se não encontrou telefone nos campos padrão, procura em todos os campos
-            if not telefone_encontrado:
-                for campo, valor in msg.items():
-                    if valor is not None:
-                        valor_str = str(valor).strip()
-                        # Verifica se o valor tem 11 dígitos (possível telefone)
-                        if len(valor_str) == 11 and valor_str.isdigit():
-                            telefone_limpo = limpar_telefone(valor_str)
-                            if telefone_limpo and len(telefone_limpo) == 11:
-                                telefones.add(telefone_limpo)
-                                break
+            # Campo 'telefone' da nova API
+            if 'telefone' in msg and msg['telefone'] is not None:
+                valor_str = str(msg['telefone']).strip()
+                telefone_limpo = limpar_telefone(valor_str)
+                if telefone_limpo and len(telefone_limpo) == 11:
+                    telefones.add(telefone_limpo)
     
     return telefones
 
@@ -138,31 +241,19 @@ def extrair_cpfs_kolmeya(messages):
     
     for msg in messages:
         if isinstance(msg, dict):
-            # Procura por campos que podem conter CPF
-            campos_cpf = ['cpf', 'document', 'documento', 'cnpj', 'cnpj_cpf']
-            
-            for campo in campos_cpf:
-                if campo in msg and msg[campo] is not None:
-                    valor = msg[campo]
-                    valor_str = str(valor).strip()
-                    
-                    # Verifica se o valor parece ser um CPF (11 dígitos)
-                    if len(valor_str) == 11 and valor_str.isdigit():
-                        # Verifica se não é um telefone (CPF não pode começar com 0)
-                        if not valor_str.startswith('0'):
-                            cpfs.add(valor_str)
-                            break
-                    # Verifica se o valor parece ser um CPF com formatação (14 caracteres)
-                    elif len(valor_str) == 14 and valor_str.replace('.', '').replace('-', '').isdigit():
-                        cpf_limpo = valor_str.replace('.', '').replace('-', '')
-                        if len(cpf_limpo) == 11 and not cpf_limpo.startswith('0'):
-                            cpfs.add(cpf_limpo)
-                            break
+            # Campo 'cpf' da nova API
+            if 'cpf' in msg and msg['cpf'] is not None:
+                valor_str = str(msg['cpf']).strip()
+                
+                # Usar a nova função de limpeza de CPF
+                cpf_limpo = limpar_cpf(valor_str)
+                if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                        cpfs.add(cpf_limpo)
     
     return cpfs
 
-def extrair_cpfs_da_base(df):
-    """Extrai e limpa todos os CPFs da base carregada."""
+def extrair_cpfs_da_base(df, data_ini=None, data_fim=None):
+    """Extrai e limpa todos os CPFs da base carregada, opcionalmente filtrados por data."""
     cpfs = set()
     
     # Procura por colunas que podem conter CPFs
@@ -176,20 +267,60 @@ def extrair_cpfs_da_base(df):
     if not colunas_cpf:
         colunas_cpf = df.columns.tolist()
     
-    for col in colunas_cpf:
-        for valor in df[col].dropna():
-            valor_str = str(valor).strip()
+    # Procura por colunas de data
+    colunas_data = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+            colunas_data.append(col)
+    
+    for idx, row in df.iterrows():
+        # Verifica se está no período de data (se especificado)
+        if data_ini and data_fim and colunas_data:
+            data_valida = False
+            for col in colunas_data:
+                try:
+                    data_str = str(row[col])
+                    if pd.notna(data_str) and data_str.strip():
+                        # Tenta diferentes formatos de data
+                        data_criacao = None
+                        
+                        # Formato: DD/MM/YYYY HH:MM
+                        if len(data_str) >= 16 and '/' in data_str:
+                            data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                        # Formato: DD/MM/YYYY
+                        elif len(data_str) == 10 and '/' in data_str:
+                            data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
+                        # Formato: YYYY-MM-DD HH:MM:SS
+                        elif len(data_str) >= 19:
+                            data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                        # Formato: YYYY-MM-DD
+                        elif len(data_str) == 10:
+                            data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
+                        
+                        if data_criacao:
+                            data_ini_dt = datetime.combine(data_ini, datetime.min.time())
+                            data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                            if data_ini_dt <= data_criacao <= data_fim_dt:
+                                data_valida = True
+                                break
+                except (ValueError, TypeError):
+                    continue
             
-            # Verifica se o valor parece ser um CPF (11 dígitos)
-            if len(valor_str) == 11 and valor_str.isdigit():
-                # Verifica se não é um telefone (CPF não pode começar com 0)
-                if not valor_str.startswith('0'):
-                    cpfs.add(valor_str)
-            # Verifica se o valor parece ser um CPF com formatação (14 caracteres)
-            elif len(valor_str) == 14 and valor_str.replace('.', '').replace('-', '').isdigit():
-                cpf_limpo = valor_str.replace('.', '').replace('-', '')
-                if len(cpf_limpo) == 11 and not cpf_limpo.startswith('0'):
-                    cpfs.add(cpf_limpo)
+            # Se não está no período, pula este registro
+            if not data_valida:
+                continue
+        
+        # Extrai CPFs das colunas
+        for col in colunas_cpf:
+            valor = row[col] if col in row else None
+            if valor is not None:
+                valor_str = str(valor).strip()
+                
+                # Usar a nova função de limpeza de CPF
+                cpf_limpo = limpar_cpf(valor_str)
+                if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                        cpfs.add(cpf_limpo)
     
     return cpfs
 
@@ -266,222 +397,182 @@ def comparar_telefones_e_cpfs(telefones_base, telefones_kolmeya, cpfs_base, cpfs
         'registros_completos': len(registros_completos)
     }
 
+
+
 def formatar_real(valor):
-    return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+    """Formata um valor numérico para formato de moeda brasileira."""
+    try:
+        # Converte para float se for string ou outro tipo
+        if isinstance(valor, str):
+            # Remove caracteres não numéricos exceto ponto e vírgula
+            valor_limpo = valor.replace('R$', '').replace(' ', '').strip()
+            # Substitui vírgula por ponto para conversão
+            valor_limpo = valor_limpo.replace(',', '.')
+            valor = float(valor_limpo)
+        else:
+            valor = float(valor)
+        
+        # Formata o valor
+        return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+    except (ValueError, TypeError):
+        # Se não conseguir converter, retorna o valor original
+        return str(valor)
 
 def obter_saldo_kolmeya(token=None):
-    """Consulta o saldo disponível do Kolmeya via endpoint /api/v1/sms/balance."""
+    """Retorna saldo real do Kolmeya via API."""
     if token is None:
-        token = os.environ.get("KOLMEYA_TOKEN", "")
-    url = "https://kolmeya.com.br/api/v1/sms/balance"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
+        token = get_kolmeya_token()
+    
+    if not token:
+        print("❌ Token do Kolmeya não encontrado para consulta de saldo")
+        return 0.0
+    
     try:
-        resp = requests.post(url, headers=headers, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("balance")
+        url = "https://kolmeya.com.br/api/v1/account/balance"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        resp = requests.get(url, headers=headers, timeout=30)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            saldo = data.get("balance", 0.0)
+            return float(saldo)
+        else:
+            return 0.0
+            
     except Exception as e:
-        return f"Erro ao consultar saldo: {e}"
+        return 0.0
 
 def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     """Consulta o endpoint Kolmeya para status de SMS."""
     if data_ini is None or data_fim is None:
         return [], 0
     
-    start_at = datetime.combine(data_ini, datetime.min.time()).strftime('%Y-%m-%d %H:%M')
+    # Formatar datas para o formato esperado pela API
+    start_at = data_ini.strftime('%Y-%m-%d 00:00')
+    end_at = data_fim.strftime('%Y-%m-%d 23:59')
     
-    hoje = datetime.now().date()
-    if data_fim == hoje:
-        # Para hoje, usa o horário atual para incluir SMS enviados hoje
-        end_at = datetime.now().strftime('%Y-%m-%d %H:%M')
-    else:
-        # Para outras datas, usa o final do dia
-        end_at = datetime.combine(data_fim, datetime.max.time()).strftime('%Y-%m-%d %H:%M')
+    print(f"🔍 Consultando API real do Kolmeya:")
+    print(f"   📅 Período: {start_at} a {end_at}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
     
-    # Debug: mostra as datas sendo usadas
-    print(f"Consultando SMS de {start_at} até {end_at}")
-    
-    # Verificar se há token válido
-    token = os.environ.get("KOLMEYA_TOKEN", "")
-    if not token or token == "":
-        print("Token não encontrado, usando dados simulados")
-        return simular_dados_kolmeya(start_at, end_at, tenant_segment_id)
-    
-    messages = consultar_status_sms_kolmeya(start_at, end_at, limit=30000, tenant_segment_id=tenant_segment_id)
-    
-    # Se não há mensagens (erro de autenticação), usar dados simulados
-    if not messages:
-        print("Erro na API, usando dados simulados")
-        return simular_dados_kolmeya(start_at, end_at, tenant_segment_id)
-    
-    start_at_acessos = data_ini.strftime('%Y-%m-%d')
-    end_at_acessos = data_fim.strftime('%Y-%m-%d')
-    total_acessos = consultar_acessos_sms_kolmeya(start_at_acessos, end_at_acessos, limit=5000, tenant_segment_id=tenant_segment_id)
-    
-    return messages, total_acessos
+    # Consulta real à API
+    try:
+        messages = consultar_status_sms_kolmeya(start_at, end_at, token=None, tenant_segment_id=tenant_segment_id)
+        
+        if messages:
+            print(f"✅ API retornou {len(messages)} mensagens")
+            # Retornar dados reais sem estimativas
+            total_acessos = len(messages)  # Um acesso por SMS
+            return messages, total_acessos
+        else:
+            print("⚠️ API não retornou mensagens")
+            return [], 0
+            
+    except Exception as e:
+        print(f"❌ Erro na consulta: {e}")
+        return [], 0
 
 def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tenant_segment_id=None):
     """Consulta o status das mensagens SMS enviadas via Kolmeya."""
     if token is None:
-        token = os.environ.get("KOLMEYA_TOKEN", "")
+        token = get_kolmeya_token()
+    
+    if not token:
+        print("❌ Token do Kolmeya não encontrado")
+        return []
+    
+    # Verificar se o período não excede 7 dias
+    try:
+        start_dt = datetime.strptime(start_at, '%Y-%m-%d %H:%M')
+        end_dt = datetime.strptime(end_at, '%Y-%m-%d %H:%M')
+        diff_days = (end_dt - start_dt).days
+        
+        if diff_days > 7:
+            print(f"❌ Período máximo permitido é de 7 dias. Período solicitado: {diff_days} dias")
+            return []
+    except ValueError as e:
+        print(f"❌ Erro ao converter datas: {e}")
+        return []
+    
     url = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
+    
     body = {
         "start_at": start_at,
         "end_at": end_at,
-        "limit": limit
+        "limit": min(limit, 30000)  # Máximo permitido pela API
     }
-    if tenant_segment_id is not None:
-        body["tenant_segment_id"] = tenant_segment_id
     
     try:
-        print(f"Fazendo requisição para Kolmeya: {body}")
         resp = requests.post(url, headers=headers, json=body, timeout=30)
-        print(f"Status da resposta: {resp.status_code}")
         
-        if resp.status_code != 200:
-            print(f"Erro na resposta: {resp.text}")
-            return []
-        
-        resp.raise_for_status()
-        data = resp.json()
-        messages = data.get("messages", [])
-        print(f"Total de mensagens recebidas: {len(messages)}")
-        
-        # Debug: mostra informações sobre as mensagens se houver
-        if messages and len(messages) > 0:
-            primeira_msg = messages[0]
-            if isinstance(primeira_msg, dict):
-                print(f"Campos da primeira mensagem: {list(primeira_msg.keys())}")
-                if 'tenant_segment_id' in primeira_msg:
-                    print(f"tenant_segment_id da primeira mensagem: {primeira_msg['tenant_segment_id']}")
-        
-        # Se tenant_segment_id foi enviado para a API, confia na filtragem da API
-        # Se não foi enviado, retorna todas as mensagens
-        return messages
-    except Exception as e:
-        print(f"Erro ao consultar status SMS Kolmeya: {e}")
+        if resp.status_code == 200:
+            data = resp.json()
+            messages = data.get("messages", [])
+            
+            print(f"✅ Resposta recebida: {len(messages)} mensagens")
+            
+            # Filtrar por centro de custo se especificado
+            if tenant_segment_id and messages:
+                messages_filtradas = []
+                
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        # Tentar diferentes campos que podem conter o centro de custo
+                        centro_custo_msg = None
+                        
+                        # Lista de campos possíveis para centro de custo
+                        campos_possiveis = [
+                            'centro_custo', 'tenant_segment_id', 'cost_center', 'segment',
+                            'campaign_id', 'campaign_name', 'template_id', 'template_name',
+                            'sender_id', 'sender_name', 'account_id', 'account_name',
+                            'group_id', 'group_name', 'tag', 'tags', 'category'
+                        ]
+                        
+                        for campo in campos_possiveis:
+                            if campo in msg:
+                                valor = msg.get(campo, '')
+                                # Se encontrou um valor, tentar usar para filtragem
+                                if not centro_custo_msg and valor:
+                                    centro_custo_msg = str(valor)
+                        
+                        # Se encontrou algum campo, verificar se corresponde ao filtro
+                        if centro_custo_msg:
+                            # Mapear IDs para nomes se necessário
+                            mapeamento_centros = {
+                                "8105": ["Novo", "8105", "NOVO", "novo", "INSS", "inss", "Inss"],
+                                "8103": ["FGTS", "8103", "fgts", "Fgts", "Fgts", "Fgts"], 
+                                "8208": ["Crédito CLT", "8208", "CLT", "clt", "Crédito", "CREDITO", "credito", "CLT", "clt"]
+                            }
+                            
+                            valores_aceitos = mapeamento_centros.get(tenant_segment_id, [tenant_segment_id])
+                            
+                            # Verificar se o valor encontrado corresponde ao filtro
+                            if centro_custo_msg in valores_aceitos:
+                                messages_filtradas.append(msg)
+                
+                return messages_filtradas
+            
+            # Se não há filtro, retornar todas as mensagens
+            return messages
+    except requests.exceptions.Timeout:
+        print("❌ Timeout na requisição")
         return []
-
-def consultar_acessos_sms_kolmeya(start_at, end_at, limit=5000, token=None, tenant_segment_id=None):
-    """Consulta os acessos das mensagens SMS via Kolmeya."""
-    if token is None:
-        token = os.environ.get("KOLMEYA_TOKEN", "")
-    if not token:
-        return 0
-    
-    url = "https://kolmeya.com.br/api/v1/sms/accesses"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    body = {
-        "start_at": start_at,
-        "end_at": end_at,
-        "is_robot": 0,
-        "limit": limit
-    }
-    if tenant_segment_id is not None:
-        body["tenant_segment_id"] = tenant_segment_id
-    
-    try:
-        resp = requests.post(url, headers=headers, json=body, timeout=30)
-        if resp.status_code != 200:
-            return 0
-        resp.raise_for_status()
-        data = resp.json()
-        
-        total_accesses = 0
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict) and "accesses" in item:
-                    accesses_list = item.get("accesses", [])
-                    for access in accesses_list:
-                        if isinstance(access, dict):
-                            access_tenant_id = access.get('tenant_segment_id')
-                            if tenant_segment_id is None:
-                                # Se não há filtro, conta todos
-                                total_accesses += 1
-                            elif access_tenant_id is not None:
-                                # Compara strings diretamente
-                                if str(access_tenant_id) == str(tenant_segment_id):
-                                    total_accesses += 1
-        elif isinstance(data, dict):
-            total_accesses = data.get("totalAccesses", 0)
-        
-        return total_accesses
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Erro na requisição: {e}")
+        return []
     except Exception as e:
-        return 0
-
-def simular_dados_kolmeya(start_at, end_at, tenant_segment_id=None):
-    """Simula dados do Kolmeya para teste quando não há token válido"""
-    # Dados simulados baseados no período
-    messages = [
-        {
-            "id": 1,
-            "phone": "11987654321",
-            "cpf": "12345678901",
-            "centro_custo": "Novo",
-            "tenant_segment_id": "Novo",
-            "status": "delivered",
-            "created_at": "2025-08-01 10:00:00"
-        },
-        {
-            "id": 2,
-            "phone": "11987654322",
-            "cpf": "98765432100",
-            "centro_custo": "FGTS",
-            "tenant_segment_id": "FGTS",
-            "status": "delivered",
-            "created_at": "2025-08-02 11:00:00"
-        },
-        {
-            "id": 3,
-            "phone": "11987654323",
-            "cpf": "11122233344",
-            "centro_custo": "Crédito CLT",
-            "tenant_segment_id": "Crédito CLT",
-            "status": "delivered",
-            "created_at": "2025-08-03 12:00:00"
-        },
-        {
-            "id": 4,
-            "phone": "11987654324",
-            "cpf": "55566677788",
-            "centro_custo": "Novo",
-            "tenant_segment_id": "Novo",
-            "status": "delivered",
-            "created_at": "2025-08-04 13:00:00"
-        },
-        {
-            "id": 5,
-            "phone": "11987654325",
-            "cpf": "99988877766",
-            "centro_custo": "FGTS",
-            "tenant_segment_id": "FGTS",
-            "status": "delivered",
-            "created_at": "2025-08-05 14:00:00"
-        }
-    ]
-    
-    # Se há um filtro específico, aplica o filtro
-    if tenant_segment_id is not None:
-        messages = [msg for msg in messages if msg.get('tenant_segment_id') == tenant_segment_id]
-    
-    # Simula acessos baseado no número de mensagens
-    total_acessos = len(messages) * 2  # Simula que 50% dos SMS geraram acessos
-    
-    return messages, total_acessos
-
+        print(f"❌ Erro inesperado: {e}")
+        return []
 
 @st.cache_data(ttl=600)
 def ler_base(uploaded_file):
@@ -502,6 +593,855 @@ def ler_base(uploaded_file):
     else:
         return pd.read_excel(uploaded_file, dtype=str)
 
+def extrair_ura_da_base(df, data_ini=None, data_fim=None):
+    """Extrai e conta registros com UTM source = 'URA' da base carregada, separados por status e opcionalmente filtrados por data."""
+    ura_count = 0
+    ura_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    ura_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
+    
+    # Verifica se há dados válidos na base
+    if df is None or df.empty:
+        return ura_count, ura_por_status, ura_cpfs_por_status
+    
+    # Procura por colunas que podem conter UTM source
+    colunas_utm = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['utm', 'source', 'origem', 'fonte']):
+            colunas_utm.append(col)
+    
+    # Se não encontrar colunas específicas, procura por qualquer coluna que contenha "utm"
+    if not colunas_utm:
+        for col in df.columns:
+            if 'utm' in col.lower():
+                colunas_utm.append(col)
+    
+    # Se ainda não encontrou, procura por colunas que contenham "source"
+    if not colunas_utm:
+        for col in df.columns:
+            if 'source' in col.lower():
+                colunas_utm.append(col)
+    
+    # Se não encontrou nenhuma coluna UTM, retorna zeros
+    if not colunas_utm:
+        return ura_count, ura_por_status, ura_cpfs_por_status
+    
+    # Procura por colunas que podem conter CPFs
+    colunas_cpf = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['cpf', 'document', 'documento', 'cnpj']):
+            colunas_cpf.append(col)
+    
+    # Se não encontrar colunas específicas de CPF, usa todas as colunas
+    if not colunas_cpf:
+        colunas_cpf = df.columns.tolist()
+    
+    # Procura por colunas de status
+    colunas_status = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['status', 'categoria', 'tipo', 'segmento']):
+            colunas_status.append(col)
+    
+    # Se não encontrar colunas específicas de status, procura por qualquer coluna que contenha "status"
+    if not colunas_status:
+        for col in df.columns:
+            if 'status' in col.lower():
+                colunas_status.append(col)
+    
+    # Procura por colunas de data
+    colunas_data = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+            colunas_data.append(col)
+    
+    # Conta registros com valor "URA"
+    for idx, row in df.iterrows():
+        # Verifica se tem UTM source = "URA"
+        tem_ura = False
+        for col in colunas_utm:
+            valor = row[col] if col in row else None
+            if valor is not None:
+                valor_str = str(valor).strip().upper()
+                if valor_str == "URA":
+                    tem_ura = True
+                    break
+        
+        if tem_ura:
+            # Se há filtro de data, verifica se está no período
+            if data_ini and data_fim and colunas_data:
+                data_valida = False
+                for col in colunas_data:
+                    try:
+                        data_str = str(row[col])
+                        if pd.notna(data_str) and data_str.strip():
+                            # Tenta diferentes formatos de data
+                            data_criacao = None
+                            
+                            # Formato: DD/MM/YYYY HH:MM
+                            if len(data_str) >= 16 and '/' in data_str:
+                                data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                            # Formato: DD/MM/YYYY
+                            elif len(data_str) == 10 and '/' in data_str:
+                                data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
+                            # Formato: YYYY-MM-DD HH:MM:SS
+                            elif len(data_str) >= 19:
+                                data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                            # Formato: YYYY-MM-DD
+                            elif len(data_str) == 10:
+                                data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
+                            
+                            if data_criacao:
+                                data_ini_dt = datetime.combine(data_ini, datetime.min.time())
+                                data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                                if data_ini_dt <= data_criacao <= data_fim_dt:
+                                    data_valida = True
+                                    break
+                    except (ValueError, TypeError):
+                        continue
+                
+                # Se não há filtro de data ou se a data está no período, conta o registro
+                if data_valida:
+                    ura_count += 1
+                    # Extrai CPF do registro
+                    cpf_encontrado = None
+                    for col in colunas_cpf:
+                        valor_cpf = row[col] if col in row else None
+                        if valor_cpf is not None:
+                            valor_cpf_str = str(valor_cpf).strip()
+                            # Usar a nova função de limpeza de CPF
+                            cpf_limpo = limpar_cpf(valor_cpf_str)
+                            if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                                        cpf_encontrado = cpf_limpo
+                                        break
+                    
+                    # Categoriza por status
+                    status_encontrado = False
+                    for col in colunas_status:
+                        valor_status = row[col] if col in row else None
+                        if valor_status is not None:
+                            valor_status_str = str(valor_status).strip().upper()
+                            if valor_status_str.startswith('INSS'):
+                                ura_por_status['Novo'] += 1
+                                if cpf_encontrado:
+                                    ura_cpfs_por_status['Novo'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                            elif valor_status_str.startswith('FGTS'):
+                                ura_por_status['FGTS'] += 1
+                                if cpf_encontrado:
+                                    ura_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                            elif valor_status_str.startswith('CLT'):
+                                ura_por_status['CLT'] += 1
+                                if cpf_encontrado:
+                                    ura_cpfs_por_status['CLT'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                    
+                    if not status_encontrado:
+                        ura_por_status['Outros'] += 1
+                        if cpf_encontrado:
+                            ura_cpfs_por_status['Outros'].add(cpf_encontrado)
+            else:
+                # Se não há filtro de data, conta todos os registros URA
+                ura_count += 1
+                # Extrai CPF do registro
+                cpf_encontrado = None
+                for col in colunas_cpf:
+                    valor_cpf = row[col] if col in row else None
+                    if valor_cpf is not None:
+                        valor_cpf_str = str(valor_cpf).strip()
+                        # Usar a nova função de limpeza de CPF
+                        cpf_limpo = limpar_cpf(valor_cpf_str)
+                        if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                                cpf_encontrado = cpf_limpo
+                                break
+                
+                # Categoriza por status
+                status_encontrado = False
+                for col in colunas_status:
+                    valor_status = row[col] if col in row else None
+                    if valor_status is not None:
+                        valor_status_str = str(valor_status).strip().upper()
+                        if valor_status_str.startswith('INSS'):
+                            ura_por_status['Novo'] += 1
+                            if cpf_encontrado:
+                                ura_cpfs_por_status['Novo'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('FGTS'):
+                            ura_por_status['FGTS'] += 1
+                            if cpf_encontrado:
+                                ura_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('CLT'):
+                            ura_por_status['CLT'] += 1
+                            if cpf_encontrado:
+                                ura_cpfs_por_status['CLT'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                
+                if not status_encontrado:
+                    ura_por_status['Outros'] += 1
+                    if cpf_encontrado:
+                        ura_cpfs_por_status['Outros'].add(cpf_encontrado)
+    
+    return ura_count, ura_por_status, ura_cpfs_por_status
+
+def filtrar_mensagens_por_data(messages, data_ini, data_fim):
+    """Filtra mensagens do Kolmeya por período de data."""
+    if not messages or not data_ini or not data_fim:
+        return messages
+    
+    # Converte as datas para datetime
+    data_ini_dt = datetime.combine(data_ini, datetime.min.time())
+    data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+    
+    mensagens_filtradas = []
+    
+    for msg in messages:
+        if isinstance(msg, dict):
+            # Campo 'enviada_em' da nova API (formato: dd/mm/yyyy hh:mm)
+            if 'enviada_em' in msg and msg['enviada_em']:
+                try:
+                    data_str = str(msg['enviada_em'])
+                    # Formato: DD/MM/YYYY HH:MM
+                    if len(data_str) >= 16 and '/' in data_str:
+                        data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                        
+                        # Se está no período, inclui a mensagem
+                        if data_ini_dt <= data_criacao <= data_fim_dt:
+                            mensagens_filtradas.append(msg)
+                except (ValueError, TypeError):
+                    continue
+    
+    return mensagens_filtradas
+
+def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
+    """Consulta o endpoint da Facta para um CPF específico."""
+    if token is None:
+        token = get_facta_token()
+    
+    if not token:
+        print("Token da Facta não encontrado")
+        return None
+    
+    # URL da API da Facta (produção)
+    url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    # Parâmetros da consulta
+    params = {
+        "cpf": cpf,
+        "convenio": 3,  # FACTA FINANCEIRA
+        "quantidade": 5000,  # Máximo de registros por página
+        "pagina": 1
+    }
+    
+    # Adicionar filtros de data se fornecidos
+    if data_ini:
+        params["data_ini"] = data_ini.strftime('%d/%m/%Y')
+    if data_fim:
+        params["data_fim"] = data_fim.strftime('%d/%m/%Y')
+    
+    try:
+        print(f"Consultando Facta para CPF: {cpf}")
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if not data.get("erro", True):
+                propostas = data.get("propostas", [])
+                print(f"Encontradas {len(propostas)} propostas para CPF {cpf}")
+                return propostas
+            else:
+                print(f"Erro na resposta da Facta para CPF {cpf}: {data.get('mensagem', 'Erro desconhecido')}")
+                return []
+        else:
+            print(f"Erro HTTP {resp.status_code} ao consultar Facta para CPF {cpf}")
+            return []
+            
+    except Exception as e:
+        print(f"Erro ao consultar Facta para CPF {cpf}: {e}")
+        return []
+
+def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
+    """Consulta o endpoint da Facta para múltiplos CPFs usando threads."""
+    if not cpfs:
+        return {}
+    
+    resultados = {}
+    
+    def consultar_cpf(cpf):
+        try:
+            propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
+            return cpf, propostas
+        except Exception as e:
+            print(f"Erro ao consultar CPF {cpf}: {e}")
+            return cpf, []
+    
+    # Usar ThreadPoolExecutor para consultas paralelas
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submeter todas as consultas
+        future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in cpfs}
+        
+        # Coletar resultados
+        for future in as_completed(future_to_cpf):
+            cpf = future_to_cpf[future]
+            try:
+                cpf_result, propostas = future.result()
+                resultados[cpf_result] = propostas
+            except Exception as e:
+                print(f"Erro ao processar resultado para CPF {cpf}: {e}")
+                resultados[cpf] = []
+    
+    return resultados
+
+def analisar_propostas_facta(propostas_dict):
+    """Analisa as propostas da Facta e retorna estatísticas."""
+    if not propostas_dict:
+        return {
+            'total_cpfs_consultados': 0,
+            'total_propostas': 0,
+            'cpfs_com_propostas': 0,
+            'cpfs_sem_propostas': 0,
+            'propostas_por_status': {},
+            'valor_total_propostas': 0.0,
+            'valor_medio_proposta': 0.0,
+            'propostas_por_produto': {},
+            'propostas_por_averbador': {},
+            'propostas_por_corretor': {},
+            'propostas_por_tipo_operacao': {},
+            'taxa_conversao': 0.0
+        }
+    
+    total_cpfs = len(propostas_dict)
+    total_propostas = 0
+    cpfs_com_propostas = 0
+    cpfs_sem_propostas = 0
+    propostas_por_status = {}
+    propostas_por_produto = {}
+    propostas_por_averbador = {}
+    propostas_por_corretor = {}
+    propostas_por_tipo_operacao = {}
+    valor_total = 0.0
+    
+    for cpf, propostas in propostas_dict.items():
+        if propostas:
+            cpfs_com_propostas += 1
+            total_propostas += len(propostas)
+            
+            for proposta in propostas:
+                # Contar por status
+                status = proposta.get('status_proposta', 'Sem Status')
+                propostas_por_status[status] = propostas_por_status.get(status, 0) + 1
+                
+                # Contar por produto
+                produto = proposta.get('produto', 'Sem Produto')
+                propostas_por_produto[produto] = propostas_por_produto.get(produto, 0) + 1
+                
+                # Contar por averbador
+                averbador = proposta.get('averbador', 'Sem Averbador')
+                propostas_por_averbador[averbador] = propostas_por_averbador.get(averbador, 0) + 1
+                
+                # Contar por corretor
+                corretor = proposta.get('corretor', 'Sem Corretor')
+                propostas_por_corretor[corretor] = propostas_por_corretor.get(corretor, 0) + 1
+                
+                # Contar por tipo de operação
+                tipo_operacao = proposta.get('tipo_operacao', 'Sem Tipo')
+                propostas_por_tipo_operacao[tipo_operacao] = propostas_por_tipo_operacao.get(tipo_operacao, 0) + 1
+                
+                # Somar valores
+                valor_bruto = float(proposta.get('valor_bruto', 0))
+                valor_total += valor_bruto
+        else:
+            cpfs_sem_propostas += 1
+    
+    return {
+        'total_cpfs_consultados': total_cpfs,
+        'total_propostas': total_propostas,
+        'cpfs_com_propostas': cpfs_com_propostas,
+        'cpfs_sem_propostas': cpfs_sem_propostas,
+        'propostas_por_status': propostas_por_status,
+        'valor_total_propostas': valor_total,
+        'valor_medio_proposta': valor_total / total_propostas if total_propostas > 0 else 0.0,
+        'propostas_por_produto': propostas_por_produto,
+        'propostas_por_averbador': propostas_por_averbador,
+        'propostas_por_corretor': propostas_por_corretor,
+        'propostas_por_tipo_operacao': propostas_por_tipo_operacao,
+        'taxa_conversao': (cpfs_com_propostas / total_cpfs * 100) if total_cpfs > 0 else 0.0
+    }
+
+def obter_cpfs_fgts_4net_kolmeya(uploaded_file, data_ini, data_fim, messages):
+    """Obtém CPFs de FGTS tanto do 4NET quanto do Kolmeya."""
+    cpfs_fgts = set()
+    
+    # CPFs do 4NET (URA)
+    if uploaded_file is not None:
+        try:
+            df_base = ler_base(uploaded_file)
+            ura_count, ura_por_status, ura_cpfs_por_status = extrair_ura_da_base(df_base, data_ini, data_fim)
+            
+            # Adicionar CPFs de FGTS do 4NET
+            cpfs_fgts.update(ura_cpfs_por_status.get('FGTS', set()))
+            print(f"CPFs FGTS encontrados no 4NET: {len(ura_cpfs_por_status.get('FGTS', set()))}")
+        except Exception as e:
+            print(f"Erro ao extrair CPFs FGTS do 4NET: {e}")
+    
+    # CPFs do Kolmeya
+    if messages:
+        # Filtrar mensagens de FGTS
+        mensagens_fgts = [msg for msg in messages if isinstance(msg, dict) and 
+                         msg.get('tenant_segment_id') == 'FGTS']
+        
+        # Extrair CPFs das mensagens de FGTS
+        cpfs_kolmeya_fgts = extrair_cpfs_kolmeya(mensagens_fgts)
+        cpfs_fgts.update(cpfs_kolmeya_fgts)
+        print(f"CPFs FGTS encontrados no Kolmeya: {len(cpfs_kolmeya_fgts)}")
+    
+    return cpfs_fgts
+
+def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
+    """Extrai e conta registros com UTM source = 'WHATSAPP_MKT' da base carregada, separados por status e opcionalmente filtrados por data."""
+    whatsapp_count = 0
+    whatsapp_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    whatsapp_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
+    
+    # Verifica se há dados válidos na base
+    if df is None or df.empty:
+        return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+    
+    # Procura por colunas que podem conter UTM source
+    colunas_utm = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['utm', 'source', 'origem', 'fonte']):
+            colunas_utm.append(col)
+    
+    # Se não encontrar colunas específicas, procura por qualquer coluna que contenha "utm"
+    if not colunas_utm:
+        for col in df.columns:
+            if 'utm' in col.lower():
+                colunas_utm.append(col)
+    
+    # Se ainda não encontrou, procura por colunas que contenham "source"
+    if not colunas_utm:
+        for col in df.columns:
+            if 'source' in col.lower():
+                colunas_utm.append(col)
+    
+    # Se não encontrou nenhuma coluna UTM, retorna zeros
+    if not colunas_utm:
+        return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+    
+    # Procura por colunas que podem conter CPFs
+    colunas_cpf = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['cpf', 'document', 'documento', 'cnpj']):
+            colunas_cpf.append(col)
+    
+    # Se não encontrar colunas específicas de CPF, usa todas as colunas
+    if not colunas_cpf:
+        colunas_cpf = df.columns.tolist()
+    
+    # Procura por colunas de status
+    colunas_status = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['status', 'categoria', 'tipo', 'segmento']):
+            colunas_status.append(col)
+    
+    # Se não encontrar colunas específicas de status, procura por qualquer coluna que contenha "status"
+    if not colunas_status:
+        for col in df.columns:
+            if 'status' in col.lower():
+                colunas_status.append(col)
+    
+    # Procura por colunas de data
+    colunas_data = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+            colunas_data.append(col)
+    
+    # Conta registros com valor "WHATSAPP_MKT"
+    for idx, row in df.iterrows():
+        # Verifica se tem UTM source = "WHATSAPP_MKT"
+        tem_whatsapp = False
+        for col in colunas_utm:
+            valor = row[col] if col in row else None
+            if valor is not None:
+                valor_str = str(valor).strip().upper()
+                if valor_str == "WHATSAPP_MKT":
+                    tem_whatsapp = True
+                    break
+        
+        if tem_whatsapp:
+            # Se há filtro de data, verifica se está no período
+            if data_ini and data_fim and colunas_data:
+                data_valida = False
+                for col in colunas_data:
+                    try:
+                        data_str = str(row[col])
+                        if pd.notna(data_str) and data_str.strip():
+                            # Tenta diferentes formatos de data
+                            data_criacao = None
+                            
+                            # Formato: DD/MM/YYYY HH:MM
+                            if len(data_str) >= 16 and '/' in data_str:
+                                data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                            # Formato: DD/MM/YYYY
+                            elif len(data_str) == 10 and '/' in data_str:
+                                data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
+                            # Formato: YYYY-MM-DD HH:MM:SS
+                            elif len(data_str) >= 19:
+                                data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                            # Formato: YYYY-MM-DD
+                            elif len(data_str) == 10:
+                                data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
+                            
+                            if data_criacao:
+                                data_ini_dt = datetime.combine(data_ini, datetime.min.time())
+                                data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                                if data_ini_dt <= data_criacao <= data_fim_dt:
+                                    data_valida = True
+                                    break
+                    except (ValueError, TypeError):
+                        continue
+                
+                # Se não há filtro de data ou se a data está no período, conta o registro
+                if data_valida:
+                    whatsapp_count += 1
+                    # Extrai CPF do registro
+                    cpf_encontrado = None
+                    for col in colunas_cpf:
+                        valor_cpf = row[col] if col in row else None
+                        if valor_cpf is not None:
+                            valor_cpf_str = str(valor_cpf).strip()
+                            # Usar a nova função de limpeza de CPF
+                            cpf_limpo = limpar_cpf(valor_cpf_str)
+                            if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                                        cpf_encontrado = cpf_limpo
+                                        break
+                    
+                    # Categoriza por status
+                    status_encontrado = False
+                    for col in colunas_status:
+                        valor_status = row[col] if col in row else None
+                        if valor_status is not None:
+                            valor_status_str = str(valor_status).strip().upper()
+                            if valor_status_str.startswith('INSS'):
+                                whatsapp_por_status['Novo'] += 1
+                                if cpf_encontrado:
+                                    whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                            elif valor_status_str.startswith('FGTS'):
+                                whatsapp_por_status['FGTS'] += 1
+                                if cpf_encontrado:
+                                    whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                            elif valor_status_str.startswith('CLT'):
+                                whatsapp_por_status['CLT'] += 1
+                                if cpf_encontrado:
+                                    whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                    
+                    if not status_encontrado:
+                        whatsapp_por_status['Outros'] += 1
+                        if cpf_encontrado:
+                            whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
+            else:
+                # Se não há filtro de data, conta todos os registros WHATSAPP_MKT
+                whatsapp_count += 1
+                # Extrai CPF do registro
+                cpf_encontrado = None
+                for col in colunas_cpf:
+                    valor_cpf = row[col] if col in row else None
+                    if valor_cpf is not None:
+                        valor_cpf_str = str(valor_cpf).strip()
+                        # Usar a nova função de limpeza de CPF
+                        cpf_limpo = limpar_cpf(valor_cpf_str)
+                        if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                                cpf_encontrado = cpf_limpo
+                                break
+                
+                # Categoriza por status
+                status_encontrado = False
+                for col in colunas_status:
+                    valor_status = row[col] if col in row else None
+                    if valor_status is not None:
+                        valor_status_str = str(valor_status).strip().upper()
+                        if valor_status_str.startswith('INSS'):
+                            whatsapp_por_status['Novo'] += 1
+                            if cpf_encontrado:
+                                whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('FGTS'):
+                            whatsapp_por_status['FGTS'] += 1
+                            if cpf_encontrado:
+                                whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('CLT'):
+                            whatsapp_por_status['CLT'] += 1
+                            if cpf_encontrado:
+                                whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                
+                if not status_encontrado:
+                    whatsapp_por_status['Outros'] += 1
+                    if cpf_encontrado:
+                        whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
+    
+    return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+
+def extrair_ad_da_base(df, data_ini=None, data_fim=None):
+    """Extrai e conta registros com UTM source = 'ad' da base carregada, separados por status e opcionalmente filtrados por data."""
+    ad_count = 0
+    ad_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    ad_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
+    
+    # Verifica se há dados válidos na base
+    if df is None or df.empty:
+        return ad_count, ad_por_status, ad_cpfs_por_status
+    
+    # Procura por colunas que podem conter UTM source
+    colunas_utm = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['utm', 'source', 'origem', 'fonte']):
+            colunas_utm.append(col)
+    
+    # Se não encontrar colunas específicas, procura por qualquer coluna que contenha "utm"
+    if not colunas_utm:
+        for col in df.columns:
+            if 'utm' in col.lower():
+                colunas_utm.append(col)
+    
+    # Se ainda não encontrou, procura por colunas que contenham "source"
+    if not colunas_utm:
+        for col in df.columns:
+            if 'source' in col.lower():
+                colunas_utm.append(col)
+    
+    # Se não encontrou nenhuma coluna UTM, retorna zeros
+    if not colunas_utm:
+        return ad_count, ad_por_status, ad_cpfs_por_status
+    
+    # Procura por colunas que podem conter CPFs
+    colunas_cpf = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['cpf', 'document', 'documento', 'cnpj']):
+            colunas_cpf.append(col)
+    
+    # Se não encontrar colunas específicas de CPF, usa todas as colunas
+    if not colunas_cpf:
+        colunas_cpf = df.columns.tolist()
+    
+    # Procura por colunas de status
+    colunas_status = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['status', 'categoria', 'tipo', 'segmento']):
+            colunas_status.append(col)
+    
+    # Se não encontrar colunas específicas de status, procura por qualquer coluna que contenha "status"
+    if not colunas_status:
+        for col in df.columns:
+            if 'status' in col.lower():
+                colunas_status.append(col)
+    
+    # Procura por colunas de data
+    colunas_data = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+            colunas_data.append(col)
+    
+    # Conta registros com valor "ad"
+    for idx, row in df.iterrows():
+        # Verifica se tem UTM source = "ad"
+        tem_ad = False
+        for col in colunas_utm:
+            valor = row[col] if col in row else None
+            if valor is not None:
+                valor_str = str(valor).strip().lower()
+                if valor_str == "ad":
+                    tem_ad = True
+                    break
+        
+        if tem_ad:
+            # Se há filtro de data, verifica se está no período
+            if data_ini and data_fim and colunas_data:
+                data_valida = False
+                for col in colunas_data:
+                    try:
+                        data_str = str(row[col])
+                        if pd.notna(data_str) and data_str.strip():
+                            # Tenta diferentes formatos de data
+                            data_criacao = None
+                            
+                            # Formato: DD/MM/YYYY HH:MM
+                            if len(data_str) >= 16 and '/' in data_str:
+                                data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                            # Formato: DD/MM/YYYY
+                            elif len(data_str) == 10 and '/' in data_str:
+                                data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
+                            # Formato: YYYY-MM-DD HH:MM:SS
+                            elif len(data_str) >= 19:
+                                data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                            # Formato: YYYY-MM-DD
+                            elif len(data_str) == 10:
+                                data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
+                            
+                            if data_criacao:
+                                data_ini_dt = datetime.combine(data_ini, datetime.min.time())
+                                data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                                if data_ini_dt <= data_criacao <= data_fim_dt:
+                                    data_valida = True
+                                    break
+                    except (ValueError, TypeError):
+                        continue
+                
+                # Se não há filtro de data ou se a data está no período, conta o registro
+                if data_valida:
+                    ad_count += 1
+                    # Extrai CPF do registro
+                    cpf_encontrado = None
+                    for col in colunas_cpf:
+                        valor_cpf = row[col] if col in row else None
+                        if valor_cpf is not None:
+                            valor_cpf_str = str(valor_cpf).strip()
+                            # Usar a nova função de limpeza de CPF
+                            cpf_limpo = limpar_cpf(valor_cpf_str)
+                            if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                                        cpf_encontrado = cpf_limpo
+                                        break
+                    
+                    # Categoriza por status
+                    status_encontrado = False
+                    for col in colunas_status:
+                        valor_status = row[col] if col in row else None
+                        if valor_status is not None:
+                            valor_status_str = str(valor_status).strip().upper()
+                            if valor_status_str.startswith('INSS'):
+                                ad_por_status['Novo'] += 1
+                                if cpf_encontrado:
+                                    ad_cpfs_por_status['Novo'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                            elif valor_status_str.startswith('FGTS'):
+                                ad_por_status['FGTS'] += 1
+                                if cpf_encontrado:
+                                    ad_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                            elif valor_status_str.startswith('CLT'):
+                                ad_por_status['CLT'] += 1
+                                if cpf_encontrado:
+                                    ad_cpfs_por_status['CLT'].add(cpf_encontrado)
+                                status_encontrado = True
+                                break
+                    
+                    if not status_encontrado:
+                        ad_por_status['Outros'] += 1
+                        if cpf_encontrado:
+                            ad_cpfs_por_status['Outros'].add(cpf_encontrado)
+            else:
+                # Se não há filtro de data, conta todos os registros "ad"
+                ad_count += 1
+                # Extrai CPF do registro
+                cpf_encontrado = None
+                for col in colunas_cpf:
+                    valor_cpf = row[col] if col in row else None
+                    if valor_cpf is not None:
+                        valor_cpf_str = str(valor_cpf).strip()
+                        # Usar a nova função de limpeza de CPF
+                        cpf_limpo = limpar_cpf(valor_cpf_str)
+                        if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                                cpf_encontrado = cpf_limpo
+                                break
+                
+                # Categoriza por status
+                status_encontrado = False
+                for col in colunas_status:
+                    valor_status = row[col] if col in row else None
+                    if valor_status is not None:
+                        valor_status_str = str(valor_status).strip().upper()
+                        if valor_status_str.startswith('INSS'):
+                            ad_por_status['Novo'] += 1
+                            if cpf_encontrado:
+                                ad_cpfs_por_status['Novo'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('FGTS'):
+                            ad_por_status['FGTS'] += 1
+                            if cpf_encontrado:
+                                ad_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('CLT'):
+                            ad_por_status['CLT'] += 1
+                            if cpf_encontrado:
+                                ad_cpfs_por_status['CLT'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                
+                if not status_encontrado:
+                    ad_por_status['Outros'] += 1
+                    if cpf_encontrado:
+                        ad_cpfs_por_status['Outros'].add(cpf_encontrado)
+    
+    return ad_count, ad_por_status, ad_cpfs_por_status
+
 def main():
     st.set_page_config(page_title="Dashboard SMS", layout="centered")
     
@@ -520,9 +1460,9 @@ def main():
     # Filtro de centro de custo
     centro_custo_opcoes = {
         "TODOS": None,
-        "Novo": "Novo",
-        "Crédito CLT": "Crédito CLT",
-        "FGTS": "FGTS"
+        "Novo": "8105",  # ID do centro de custo NOVO no Kolmeya
+        "Crédito CLT": "8208",  # ID do centro de custo CRÉDITO CLT no Kolmeya
+        "FGTS": "8103"  # ID do centro de custo FGTS no Kolmeya
     }
     
     centro_custo_selecionado = st.selectbox(
@@ -533,8 +1473,9 @@ def main():
     )
     centro_custo_valor = centro_custo_opcoes[centro_custo_selecionado]
 
-    # Saldo Kolmeya
-    col_saldo, col_vazio = st.columns([0.9, 4.1])
+    # Saldo Kolmeya e Status Facta
+    col_saldo, col_facta_status, col_vazio = st.columns([0.9, 0.9, 3.2])
+    
     with col_saldo:
         saldo_kolmeya = obter_saldo_kolmeya()
         st.markdown(
@@ -542,672 +1483,1208 @@ def main():
             <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 32px; color: #fff; min-width: 320px; min-height: 90px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 24px; display: flex; flex-direction: column; align-items: center;'>
                 <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Saldo Atual Kolmeya</div>
                 <div style='font-size: 2.5em; font-weight: bold; color: #fff;'>
-                    {formatar_real(float(saldo_kolmeya)) if saldo_kolmeya and str(saldo_kolmeya).replace(",", ".").replace(".", "", 1).replace("-", "").isdigit() else saldo_kolmeya}
+                    {formatar_real(saldo_kolmeya)}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+    with col_facta_status:
+        token_facta = get_facta_token()
+        status_facta = "✅ Conectado" if token_facta else "❌ Desconectado"
+        cor_facta = "rgba(0, 128, 0, 0.9)" if token_facta else "rgba(255, 0, 0, 0.9)"
+        
+        st.markdown(
+            f"""
+            <div style='background: {cor_facta}; border: 2.5px solid rgba(255, 255, 255, 0.5); border-radius: 16px; padding: 24px 32px; color: #fff; min-width: 320px; min-height: 90px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 24px; display: flex; flex-direction: column; align-items: center;'>
+                <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Status Facta</div>
+                <div style='font-size: 1.8em; font-weight: bold; color: #fff;'>
+                    {status_facta}
                 </div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-    st.markdown(
-        """
-        <style>
-        body {
-            background-color: #181624 !important;
-        }
-        .stApp {
-            background-color: #181624 !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Layout com duas colunas mais próximas
-    col1, col2 = st.columns([1, 1], gap="small")
+    # Valores zerados para produção e vendas
+    st.session_state["producao_facta_ura"] = 0.0
+    st.session_state["total_vendas_facta_ura"] = 0
+    st.session_state["producao_facta_kolmeya"] = 0.0
+    st.session_state["total_vendas_facta_kolmeya"] = 0
+    st.session_state["producao_facta_total"] = 0.0
+    st.session_state["total_vendas_facta_total"] = 0
     
-    # CSS para melhorar o layout dos painéis
-    st.markdown("""
-    <style>
-    .stColumn > div {
-        width: 100% !important;
-        max-width: none !important;
-    }
-    .stMarkdown > div {
-        width: 100% !important;
-    }
-    .stMarkdown > div > div {
-        width: 100% !important;
-        max-width: none !important;
-    }
-    /* Centraliza todos os textos das métricas */
-    .stMarkdown span {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    .stMarkdown div {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    /* Centraliza especificamente os textos dos painéis */
-    .stMarkdown > div > div > div {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    .stMarkdown > div > div > div > div {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    .stMarkdown > div > div > div > div > div {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    /* Centraliza todos os elementos dentro dos painéis */
-    .stMarkdown * {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    /* Força centralização de todos os elementos */
-    .stMarkdown b {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    .stMarkdown strong {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    /* Centralização específica para os painéis */
-    .stMarkdown > div > div > div > div > div > div {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    .stMarkdown > div > div > div > div > div > div > span {
-        text-align: center !important;
-        width: 100% !important;
-        display: block !important;
-    }
-    .stMarkdown > div > div > div > div > div > div > span > b {
-        text-align: center !important;
-        width: 100% !important;
-        display: block !important;
-    }
-    /* Força centralização de todos os elementos de texto */
-    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
-        text-align: center !important;
-        width: 100% !important;
-    }
-    /* Centralização universal */
-    .stMarkdown * {
-        text-align: center !important;
-    }
-    /* Força centralização de elementos com estilos inline */
-    .stMarkdown span[style*="text-align"] {
-        text-align: center !important;
-    }
-    .stMarkdown div[style*="text-align"] {
-        text-align: center !important;
-    }
-    .stMarkdown b[style*="text-align"] {
-        text-align: center !important;
-    }
-    /* Centralização específica para elementos dentro de grid */
-    .stMarkdown div[style*="grid"] * {
-        text-align: center !important;
-    }
-    .stMarkdown div[style*="grid"] span {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    .stMarkdown div[style*="grid"] b {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    /* Força centralização de todos os elementos com qualquer estilo */
-    .stMarkdown span[style] {
-        text-align: center !important;
-    }
-    .stMarkdown div[style] {
-        text-align: center !important;
-    }
-    .stMarkdown b[style] {
-        text-align: center !important;
-    }
-    /* Centralização específica para elementos dentro de flex containers */
-    .stMarkdown div[style*="flex"] * {
-        text-align: center !important;
-    }
-    .stMarkdown div[style*="flex"] span {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    .stMarkdown div[style*="flex"] b {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    /* Força centralização de todos os elementos com qualquer atributo de estilo */
-    .stMarkdown [style] {
-        text-align: center !important;
-    }
-    .stMarkdown [style] * {
-        text-align: center !important;
-    }
-    .stMarkdown [style] span {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    .stMarkdown [style] b {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    /* Reduz espaçamento e centraliza melhor os elementos */
-    .stMarkdown div[style*="grid"] {
-        gap: 20px !important;
-    }
-    .stMarkdown div[style*="padding"] {
-        padding: 20px 24px !important;
-    }
-    /* Centralização específica para elementos dentro de containers com padding */
-    .stMarkdown div[style*="padding"] * {
-        text-align: center !important;
-    }
-    .stMarkdown div[style*="padding"] span {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    .stMarkdown div[style*="padding"] b {
-        text-align: center !important;
-        display: block !important;
-        width: 100% !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Valores zerados para WhatsApp
+    st.session_state["producao_facta_whatsapp"] = 0.0
+    st.session_state["total_vendas_facta_whatsapp"] = 0
     
-    # Garante que os valores de produção e vendas da Facta estejam sempre disponíveis no session_state
-    if "producao_facta" not in st.session_state:
-        st.session_state["producao_facta"] = 0.0
-    if "total_vendas_facta" not in st.session_state:
-        st.session_state["total_vendas_facta"] = 0
-
-    with col1:
-        # --- PAINEL KOLMEYA ---
-        try:
-            # Debug: mostra qual filtro está sendo aplicado
-            if centro_custo_valor is None:
-                pass # Remover mensagem de debug do filtro
-            
-            # Obter dados com filtro aplicado na API
-            messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, centro_custo_valor)
-            
-            # Mostra todos os valores únicos de centro_custo encontrados
-            centros_encontrados = set()
-            for m in messages:
-                if isinstance(m, dict):
-                    centros_encontrados.add(m.get('centro_custo'))
-            
-            # Contagem de SMS por centro de custo
-            centros = [m.get('centro_custo') for m in messages if isinstance(m, dict)]
-            contagem_centros = Counter(centros)
-            
-            # Para exibir a quantidade de SMS do centro de custo selecionado:
-            if centro_custo_selecionado != "TODOS":
-                quantidade_sms = len(messages)  # Usa o total de mensagens retornadas pela API filtrada
-            else:
-                quantidade_sms = len(messages)  # Usa o total de mensagens retornadas pela API
-            investimento = quantidade_sms * CUSTO_POR_ENVIO
-            
-            # Debug: mostra informações sobre os dados retornados
-            # st.info(f"📊 Total de mensagens SMS: {quantidade_sms} | Total de acessos: {total_acessos}")
-            
-            # Mapeamento de IDs para nomes dos centros de custo
-            centro_nomes = {
-                TENANT_SEGMENT_ID_NOVO: "NOVO",
-                TENANT_SEGMENT_ID_FGTS: "FGTS", 
-                TENANT_SEGMENT_ID_CLT: "CLT"
-            }
-            
-            # Remover o loop que exibe cada centro de custo e sua contagem
-            
-            # Definir cpfs antes de usar
-            cpfs = [str(m.get("cpf")).zfill(11) for m in messages if isinstance(m, dict) and m.get("cpf")]
-            cpfs_unicos = set(cpfs)
-            novos_na_carteira = total_acessos
-            leads_gerados = novos_na_carteira
-            
-            # Produção e vendas vindos da Facta
-            producao = st.session_state["producao_facta"]
-            total_vendas = st.session_state["total_vendas_facta"]
-            
-            # Cálculos
-            previsao_faturamento = producao * 0.171
-            ticket_medio = producao / total_vendas if total_vendas > 0 else 0.0
-            faturamento_medio_por_venda = previsao_faturamento / total_vendas if total_vendas > 0 else 0.0
-            custo_por_venda = investimento / leads_gerados if leads_gerados > 0 else 0.0
-            disparos_por_venda = quantidade_sms / total_vendas if total_vendas > 0 else 0.0
-            percentual_por_venda = (total_vendas / quantidade_sms * 100) if quantidade_sms > 0 else 0.0
-            disparos_por_lead = quantidade_sms / leads_gerados if leads_gerados > 0 else 0.0
-            leads_por_venda = leads_gerados / total_vendas if total_vendas > 0 else 0.0
-            roi = previsao_faturamento - investimento
-            total_entregues = st.session_state.get('total_entregues', 0)
-            interacao_percentual = (leads_gerados / quantidade_sms * 100) if quantidade_sms > 0 else 0
-            
-            st.markdown(f"""
-            <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 32px 48px; color: #fff; min-height: 120%; min-width: 100%;'>
-                <h4 style='color:#fff; text-align:center; font-size: 1.4em; margin-bottom: 20px;'>Kolmeya</h4>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 16px;'>
-                    <div style='text-align: center; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Quantidade de SMS</div>
-                        <div style='font-size: 2.4em; font-weight: bold; color: #fff;'>{str(quantidade_sms).replace(',', '.').replace('.', '.', 1) if quantidade_sms < 1000 else f'{quantidade_sms:,}'.replace(",", ".")}</div>
-                    </div>
-                    <div style='text-align: center; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Custo por envio</div>
-                        <div style='font-size: 2.4em; font-weight: bold; color: #fff;'>{formatar_real(CUSTO_POR_ENVIO)}</div>
-                    </div>
-                </div>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 20px;'>
-                    <div style='text-align: center; flex: 1; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Investimento</div>
-                        <div style='font-size: 1.8em; font-weight: bold; color: #fff;'>{formatar_real(investimento)}</div>
-                    </div>
-                    <div style='text-align: center; flex: 1; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Interação</div>
-                        <div style='font-size: 1.8em; font-weight: bold; color: #fff;'>{interacao_percentual:.1f}%</div>
-                    </div>
-                </div>
-                <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 50px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 24px 48px; margin-bottom: 20px; width: 98%; max-width: 98%; margin-left: auto; margin-right: auto;'>
-                    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 55px;'>
-                        <div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center; margin-bottom: 4px;'><b>Total de vendas</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{total_vendas}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Produção</b></span>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center;'>{formatar_real(producao)}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Previsão de faturamento</b></span>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center;'>{formatar_real(previsao_faturamento)}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center; margin-bottom: 4px;'><b>Ticket médio</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{formatar_real(ticket_medio)}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Lead gerados</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{novos_na_carteira}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>SMS entregues</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{total_entregues}</span>
-                            </div>
-                        </div>
-                        <div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Disparos p/ uma venda</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{disparos_por_venda:.1f} ({percentual_por_venda:.2f}%)</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Leads p/ venda</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{leads_por_venda:.1f} ({(total_vendas / leads_gerados * 100) if leads_gerados > 0 else 0.0:.1f}%)</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Custo por venda</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{formatar_real(custo_por_venda)}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Fatu. med p/ venda</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{formatar_real(faturamento_medio_por_venda)}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div style='display: flex; flex-direction: column; align-items: center; margin-top: 20px;'>
-                    <div style='font-size: 1.3em; margin-bottom: 8px; color: #e0d7f7;'>ROI</div>
-                    <div style='font-size: 2.4em; font-weight: bold; color: #fff;'>{formatar_real(roi)}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"Erro ao carregar dados do Kolmeya: {e}")
-
-    with col2:
-        # --- PAINEL DE ESTATÍSTICAS GERAIS ---
-        try:
-            # Dados zerados - aguardando integração com outras fontes
-            total_campanhas = 0
-            taxa_entrega = 0.0
-            taxa_abertura = 0.0
-            tempo_medio_resposta = 0.0
-            custo_medio_por_campanha = 0.0
-            total_contatos = 0
-            contatos_ativos = 0
-            taxa_ativacao = 0.0
-            
-            st.markdown(f"""
-            <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 32px 48px; color: #fff; min-height: 120%; min-width: 100%;'>
-                <h4 style='color:#fff; text-align:center; font-size: 1.4em; margin-bottom: 20px;'>Estatísticas Gerais</h4>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 16px;'>
-                    <div style='text-align: center; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Total Campanhas</div>
-                        <div style='font-size: 2.4em; font-weight: bold; color: #fff;'>{total_campanhas}</div>
-                    </div>
-                    <div style='text-align: center; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Taxa Entrega</div>
-                        <div style='font-size: 2.4em; font-weight: bold; color: #fff;'>{taxa_entrega}%</div>
-                    </div>
-                </div>
-                <div style='display: flex; justify-content: space-between; margin-bottom: 20px;'>
-                    <div style='text-align: center; flex: 1; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Taxa Abertura</div>
-                        <div style='font-size: 1.8em; font-weight: bold; color: #fff;'>{taxa_abertura}%</div>
-                    </div>
-                    <div style='text-align: center; flex: 1; display: flex; flex-direction: column; align-items: center;'>
-                        <div style='font-size: 1.3em; color: #e0d7f7; margin-bottom: 8px;'>Tempo Resposta</div>
-                        <div style='font-size: 1.8em; font-weight: bold; color: #fff;'>{tempo_medio_resposta}h</div>
-                    </div>
-                </div>
-                <div style='background-color: rgba(30, 20, 50, 0.95); border-radius: 50px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); padding: 24px 48px; margin-bottom: 20px; width: 98%; max-width: 98%; margin-left: auto; margin-right: auto;'>
-                    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 55px;'>
-                        <div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center; margin-bottom: 4px;'><b>Total Contatos</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{total_contatos:,}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Contatos Ativos</b></span>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center;'>{contatos_ativos:,}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Taxa Ativação</b></span>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center;'>{taxa_ativacao}%</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.0em; text-align: center; margin-bottom: 4px;'><b>Custo Médio</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>{formatar_real(custo_medio_por_campanha)}</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Eficiência</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>-</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Status</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>-</span>
-                            </div>
-                        </div>
-                        <div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Performance</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>-</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Qualidade</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>-</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Engajamento</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>-</span>
-                            </div>
-                            <div style='display: flex; flex-direction: column; align-items: center; margin-bottom: 18px;'>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center; margin-bottom: 4px;'><b>Retenção</b></span>
-                                <span style='color: #fff; font-size: 1.1em; text-align: center;'>0%</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div style='display: flex; flex-direction: column; align-items: center; margin-top: 20px;'>
-                    <div style='font-size: 1.3em; margin-bottom: 8px; color: #e0d7f7;'>Score Geral</div>
-                    <div style='font-size: 2.4em; font-weight: bold; color: #fff;'>0/10</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"Erro ao carregar estatísticas: {e}")
-
-    # Upload de base local
+    # Valores zerados para AD
+    st.session_state["producao_facta_ad"] = 0.0
+    st.session_state["total_vendas_facta_ad"] = 0
+    
+    # Upload de base local (movido para antes do cálculo para que os dados estejam disponíveis)
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
+    
+    # Inicializar variáveis para contagem de URA
+    ura_count = 0
+    ura_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    ura_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
+    
+    # Obter dados do Kolmeya via API ANTES de calcular leads
+    print(f"🔍 Consultando API Kolmeya:")
+    print(f"   📅 Período: {data_ini} a {data_fim}")
+    print(f"   🏢 Centro de custo: {centro_custo_selecionado}")
+    
+    messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, centro_custo_valor)
+    
+    print(f"📊 Resultado: {len(messages) if messages else 0} SMS, {total_acessos} acessos")
+    
+    # CALCULAR LEADS GERADOS ANTES DA RENDERIZAÇÃO DO HTML
+    total_leads_gerados = 0
+    telefones_base = 0
+    
+    # Se há base carregada, fazer processamento
+    if uploaded_file is not None:
+        try:
+            # Extrair telefones da base
+            telefones_base_temp = extrair_telefones_da_base(uploaded_file, data_ini, data_fim)
+            
+            # Por enquanto, usar apenas dados da URA até obter mensagens do Kolmeya
+            if centro_custo_selecionado == "Novo":
+                total_leads_gerados = ura_por_status.get('Novo', 0)
+            elif centro_custo_selecionado == "FGTS":
+                total_leads_gerados = ura_por_status.get('FGTS', 0)
+            elif centro_custo_selecionado == "Crédito CLT":
+                total_leads_gerados = ura_por_status.get('CLT', 0)
+            else:
+                total_leads_gerados = ura_count
+            telefones_base = total_leads_gerados
+            
+            print(f"🔍 Leads Gerados - Base: {len(telefones_base_temp)}, URA: {total_leads_gerados}")
+            
+        except Exception as e:
+            print(f"Erro ao calcular telefones coincidentes: {e}")
+            # Fallback para dados da URA
+            if centro_custo_selecionado == "Novo":
+                total_leads_gerados = ura_por_status.get('Novo', 0)
+            elif centro_custo_selecionado == "FGTS":
+                total_leads_gerados = ura_por_status.get('FGTS', 0)
+            elif centro_custo_selecionado == "Crédito CLT":
+                total_leads_gerados = ura_por_status.get('CLT', 0)
+            else:
+                total_leads_gerados = ura_count
+            telefones_base = total_leads_gerados
+    else:
+        # Se não há base ou mensagens, usar apenas dados da URA
+        if centro_custo_selecionado == "Novo":
+            total_leads_gerados = ura_por_status.get('Novo', 0)
+        elif centro_custo_selecionado == "FGTS":
+            total_leads_gerados = ura_por_status.get('FGTS', 0)
+        elif centro_custo_selecionado == "Crédito CLT":
+            total_leads_gerados = ura_por_status.get('CLT', 0)
+        else:
+            total_leads_gerados = ura_count
+        telefones_base = total_leads_gerados
+    
+
+
+
+    
+    # Inicializar variáveis para contagem de URA
+    ura_count = 0
+    ura_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    ura_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
+    
     if uploaded_file is not None:
         try:
             df_base = ler_base(uploaded_file)
-            st.markdown("<b>Base carregada:</b>", unsafe_allow_html=True)
-            st.dataframe(df_base)
+            # Extrair contagem de URA da base com filtro de data e separação por status
+            ura_count, ura_por_status, ura_cpfs_por_status = extrair_ura_da_base(df_base, data_ini, data_fim)
             
-            # Extrair telefones da base carregada
-            telefones_base = extrair_telefones_da_base(df_base)
-            st.info(f"📱 Telefones encontrados na base: {len(telefones_base)}")
+            # CONSULTA AUTOMÁTICA NA FACTA
+            # Obter CPFs para consulta na Facta baseado no centro de custo selecionado
+            cpfs_para_consulta = set()
             
-            # Extrair CPFs da base carregada
-            cpfs_base = extrair_cpfs_da_base(df_base)
-            st.info(f"🆔 CPFs encontrados na base: {len(cpfs_base)}")
+            if centro_custo_selecionado == "Novo":
+                cpfs_para_consulta = ura_cpfs_por_status.get('Novo', set())
+            elif centro_custo_selecionado == "FGTS":
+                cpfs_para_consulta = ura_cpfs_por_status.get('FGTS', set())
+            elif centro_custo_selecionado == "Crédito CLT":
+                cpfs_para_consulta = ura_cpfs_por_status.get('CLT', set())
+            else:
+                # Se "TODOS", usar todos os CPFs
+                for cpfs_status in ura_cpfs_por_status.values():
+                    cpfs_para_consulta.update(cpfs_status)
             
-            # Extrair telefones do Kolmeya (usando os dados já obtidos no painel principal)
-            telefones_kolmeya = extrair_telefones_kolmeya(messages)
-            st.info(f"📱 Telefones encontrados no Kolmeya: {len(telefones_kolmeya)}")
-            
-            # Extrair CPFs do Kolmeya
-            cpfs_kolmeya = extrair_cpfs_kolmeya(messages)
-            st.info(f"🆔 CPFs encontrados no Kolmeya: {len(cpfs_kolmeya)}")
-            
-            # Comparar telefones e CPFs
-            if telefones_base and telefones_kolmeya:
-                resultado_comparacao = comparar_telefones(telefones_base, telefones_kolmeya)
-                
-                # Se há CPFs, fazer comparação adicional
-                if cpfs_base and cpfs_kolmeya:
-                    resultado_cpfs = comparar_cpfs(cpfs_base, cpfs_kolmeya)
-                
-                # Exibir resultados da comparação
-                st.markdown("### 📊 Comparação de Telefones")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric(
-                        label="✅ Telefones Enviados",
-                        value=resultado_comparacao['total_enviados'],
-                        help="Telefones que estão na base E foram enviados pelo Kolmeya"
+            if cpfs_para_consulta:
+                # Consultar Facta para os CPFs encontrados
+                try:
+                    propostas_facta = consultar_facta_multiplos_cpfs(
+                        list(cpfs_para_consulta), 
+                        token=None, 
+                        max_workers=3, 
+                        data_ini=data_ini, 
+                        data_fim=data_fim
                     )
-                
-                with col2:
-                    st.metric(
-                        label="❌ Telefones Não Enviados",
-                        value=resultado_comparacao['total_nao_enviados'],
-                        help="Telefones que estão na base mas NÃO foram enviados pelo Kolmeya"
-                    )
-                
-                with col3:
-                    st.metric(
-                        label="➕ Telefones Extra",
-                        value=resultado_comparacao['total_extra'],
-                        help="Telefones que foram enviados pelo Kolmeya mas NÃO estão na base"
-                    )
-                
-                # Taxa de cobertura
-                if resultado_comparacao['total_base'] > 0:
-                    taxa_cobertura = (resultado_comparacao['total_enviados'] / resultado_comparacao['total_base']) * 100
-                    st.metric(
-                        label="📈 Taxa de Cobertura",
-                        value=f"{taxa_cobertura:.1f}%",
-                        help="Percentual de telefones da base que foram enviados pelo Kolmeya"
-                    )
-                
-                # Se há CPFs, mostrar comparação de CPFs
-                if cpfs_base and cpfs_kolmeya and resultado_cpfs:
-                    st.markdown("### 🆔 Comparação de CPFs")
                     
-                    col_cpf1, col_cpf2, col_cpf3 = st.columns(3)
-                    
-                    with col_cpf1:
-                        st.metric(
-                            label="✅ CPFs Enviados",
-                            value=resultado_cpfs['total_enviados'],
-                            help="CPFs que estão na base E foram enviados pelo Kolmeya"
-                        )
-                    
-                    with col_cpf2:
-                        st.metric(
-                            label="❌ CPFs Não Enviados",
-                            value=resultado_cpfs['total_nao_enviados'],
-                            help="CPFs que estão na base mas NÃO foram enviados pelo Kolmeya"
-                        )
-                    
-                    with col_cpf3:
-                        st.metric(
-                            label="➕ CPFs Extra",
-                            value=resultado_cpfs['total_extra'],
-                            help="CPFs que foram enviados pelo Kolmeya mas NÃO estão na base"
-                        )
-                    
-                    # Taxa de cobertura de CPFs
-                    if resultado_cpfs['total_base'] > 0:
-                        taxa_cobertura_cpfs = (resultado_cpfs['total_enviados'] / resultado_cpfs['total_base']) * 100
-                        st.metric(
-                            label="📈 Taxa de Cobertura CPFs",
-                            value=f"{taxa_cobertura_cpfs:.1f}%",
-                            help="Percentual de CPFs da base que foram enviados pelo Kolmeya"
-                        )
-                    
-                    # Exibir detalhes de CPFs em expanders
-                    with st.expander("📋 Detalhes dos CPFs Enviados"):
-                        if resultado_cpfs['enviados']:
-                            df_cpfs_enviados = pd.DataFrame(list(resultado_cpfs['enviados']), columns=['CPF'])
-                            st.dataframe(df_cpfs_enviados, use_container_width=True)
-                        else:
-                            st.info("Nenhum CPF foi enviado pelo Kolmeya.")
-                    
-                    with st.expander("📋 Detalhes dos CPFs Não Enviados"):
-                        if resultado_cpfs['nao_enviados']:
-                            df_cpfs_nao_enviados = pd.DataFrame(list(resultado_cpfs['nao_enviados']), columns=['CPF'])
-                            st.dataframe(df_cpfs_nao_enviados, use_container_width=True)
-                        else:
-                            st.info("Todos os CPFs da base foram enviados pelo Kolmeya.")
-                    
-                    with st.expander("📋 Detalhes dos CPFs Extra"):
-                        if resultado_cpfs['extra']:
-                            df_cpfs_extra = pd.DataFrame(list(resultado_cpfs['extra']), columns=['CPF'])
-                            st.dataframe(df_cpfs_extra, use_container_width=True)
-                        else:
-                            st.info("Não há CPFs extras no Kolmeya.")
-                
-                # Exibir detalhes em expanders
-                with st.expander("📋 Detalhes dos Telefones Enviados"):
-                    if resultado_comparacao['enviados']:
-                        df_enviados = pd.DataFrame(list(resultado_comparacao['enviados']), columns=['Telefone'])
-                        st.dataframe(df_enviados, use_container_width=True)
+                    # Analisar resultados da Facta
+                    if propostas_facta:
+                        analise_facta = analisar_propostas_facta(propostas_facta)
+                        
+                        # Atualizar métricas com dados da Facta (URA)
+                        st.session_state["producao_facta_ura"] = analise_facta['valor_total_propostas']
+                        st.session_state["total_vendas_facta_ura"] = analise_facta['total_propostas']
                     else:
-                        st.info("Nenhum telefone foi enviado pelo Kolmeya.")
+                        st.session_state["producao_facta_ura"] = 0.0
+                        st.session_state["total_vendas_facta_ura"] = 0
+                        
+                except Exception:
+                    st.session_state["producao_facta_ura"] = 0.0
+                    st.session_state["total_vendas_facta_ura"] = 0
+            else:
+                st.session_state["producao_facta_ura"] = 0.0
+                st.session_state["total_vendas_facta_ura"] = 0
+            
+            # Processar dados do WhatsApp e AD silenciosamente
+            try:
+                whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
+                ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
                 
-                with st.expander("📋 Detalhes dos Telefones Não Enviados"):
-                    if resultado_comparacao['nao_enviados']:
-                        df_nao_enviados = pd.DataFrame(list(resultado_comparacao['nao_enviados']), columns=['Telefone'])
-                        st.dataframe(df_nao_enviados, use_container_width=True)
+                # Processar WhatsApp na Facta
+                if whatsapp_count > 0:
+                    cpfs_whatsapp_para_consulta = set()
+                    if centro_custo_selecionado == "Novo":
+                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('Novo', set())
+                    elif centro_custo_selecionado == "FGTS":
+                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('FGTS', set())
+                    elif centro_custo_selecionado == "Crédito CLT":
+                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('CLT', set())
                     else:
-                        st.info("Todos os telefones da base foram enviados pelo Kolmeya.")
-                
-                with st.expander("📋 Detalhes dos Telefones Extra"):
-                    if resultado_comparacao['extra']:
-                        df_extra = pd.DataFrame(list(resultado_comparacao['extra']), columns=['Telefone'])
-                        st.dataframe(df_extra, use_container_width=True)
+                        for cpfs_status in whatsapp_cpfs_por_status.values():
+                            cpfs_whatsapp_para_consulta.update(cpfs_status)
+                    
+                    if cpfs_whatsapp_para_consulta:
+                        try:
+                            propostas_facta_whatsapp = consultar_facta_multiplos_cpfs(
+                                list(cpfs_whatsapp_para_consulta), 
+                                token=None, 
+                                max_workers=3, 
+                                data_ini=data_ini, 
+                                data_fim=data_fim
+                            )
+                            
+                            if propostas_facta_whatsapp:
+                                analise_facta_whatsapp = analisar_propostas_facta(propostas_facta_whatsapp)
+                                st.session_state["producao_facta_whatsapp"] = analise_facta_whatsapp['valor_total_propostas']
+                                st.session_state["total_vendas_facta_whatsapp"] = analise_facta_whatsapp['total_propostas']
+                            else:
+                                st.session_state["producao_facta_whatsapp"] = 0.0
+                                st.session_state["total_vendas_facta_whatsapp"] = 0
+                        except Exception:
+                            st.session_state["producao_facta_whatsapp"] = 0.0
+                            st.session_state["total_vendas_facta_whatsapp"] = 0
                     else:
-                        st.info("Não há telefones extras no Kolmeya.")
+                        st.session_state["producao_facta_whatsapp"] = 0.0
+                        st.session_state["total_vendas_facta_whatsapp"] = 0
+                else:
+                    st.session_state["producao_facta_whatsapp"] = 0.0
+                    st.session_state["total_vendas_facta_whatsapp"] = 0
                 
-                # Botões para exportar resultados
-                st.markdown("### 📤 Exportar Resultados")
-                col_export1, col_export2, col_export3 = st.columns(3)
-                
-                # Se há CPFs, adicionar botões de exportação para CPFs
-                if cpfs_base and cpfs_kolmeya and resultado_cpfs:
-                    st.markdown("#### 📱 Exportar Telefones")
-                
-                with col_export1:
-                    if resultado_comparacao['enviados']:
-                        df_enviados_export = pd.DataFrame(list(resultado_comparacao['enviados']), columns=['Telefone'])
-                        csv_enviados = df_enviados_export.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Exportar Enviados",
-                            data=csv_enviados,
-                            file_name=f"telefones_enviados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-                
-                with col_export2:
-                    if resultado_comparacao['nao_enviados']:
-                        df_nao_enviados_export = pd.DataFrame(list(resultado_comparacao['nao_enviados']), columns=['Telefone'])
-                        csv_nao_enviados = df_nao_enviados_export.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Exportar Não Enviados",
-                            data=csv_nao_enviados,
-                            file_name=f"telefones_nao_enviados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-                
-                with col_export3:
-                    if resultado_comparacao['extra']:
-                        df_extra_export = pd.DataFrame(list(resultado_comparacao['extra']), columns=['Telefone'])
-                        csv_extra = df_extra_export.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Exportar Extras",
-                            data=csv_extra,
-                            file_name=f"telefones_extra_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-                
-                # Botões de exportação para CPFs
-                if cpfs_base and cpfs_kolmeya and resultado_cpfs:
-                    st.markdown("#### 🆔 Exportar CPFs")
-                    col_export_cpf1, col_export_cpf2, col_export_cpf3 = st.columns(3)
+                # Processar AD na Facta
+                if ad_count > 0:
+                    cpfs_ad_para_consulta = set()
+                    if centro_custo_selecionado == "Novo":
+                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('Novo', set())
+                    elif centro_custo_selecionado == "FGTS":
+                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('FGTS', set())
+                    elif centro_custo_selecionado == "Crédito CLT":
+                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('CLT', set())
+                    else:
+                        for cpfs_status in ad_cpfs_por_status.values():
+                            cpfs_ad_para_consulta.update(cpfs_status)
                     
-                    with col_export_cpf1:
-                        if resultado_cpfs['enviados']:
-                            df_cpfs_enviados_export = pd.DataFrame(list(resultado_cpfs['enviados']), columns=['CPF'])
-                            csv_cpfs_enviados = df_cpfs_enviados_export.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Exportar CPFs Enviados",
-                                data=csv_cpfs_enviados,
-                                file_name=f"cpfs_enviados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv"
+                    if cpfs_ad_para_consulta:
+                        try:
+                            propostas_facta_ad = consultar_facta_multiplos_cpfs(
+                                list(cpfs_ad_para_consulta), 
+                                token=None, 
+                                max_workers=3, 
+                                data_ini=data_ini, 
+                                data_fim=data_fim
                             )
+                            
+                            if propostas_facta_ad:
+                                analise_facta_ad = analisar_propostas_facta(propostas_facta_ad)
+                                st.session_state["producao_facta_ad"] = analise_facta_ad['valor_total_propostas']
+                                st.session_state["total_vendas_facta_ad"] = analise_facta_ad['total_propostas']
+                            else:
+                                st.session_state["producao_facta_ad"] = 0.0
+                                st.session_state["total_vendas_facta_ad"] = 0
+                        except Exception:
+                            st.session_state["producao_facta_ad"] = 0.0
+                            st.session_state["total_vendas_facta_ad"] = 0
+                    else:
+                        st.session_state["producao_facta_ad"] = 0.0
+                        st.session_state["total_vendas_facta_ad"] = 0
+                else:
+                    st.session_state["producao_facta_ad"] = 0.0
+                    st.session_state["total_vendas_facta_ad"] = 0
                     
-                    with col_export_cpf2:
-                        if resultado_cpfs['nao_enviados']:
-                            df_cpfs_nao_enviados_export = pd.DataFrame(list(resultado_cpfs['nao_enviados']), columns=['CPF'])
-                            csv_cpfs_nao_enviados = df_cpfs_nao_enviados_export.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Exportar CPFs Não Enviados",
-                                data=csv_cpfs_nao_enviados,
-                                file_name=f"cpfs_nao_enviados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv"
-                            )
+            except Exception:
+                st.session_state["producao_facta_whatsapp"] = 0.0
+                st.session_state["total_vendas_facta_whatsapp"] = 0
+                st.session_state["producao_facta_ad"] = 0.0
+                st.session_state["total_vendas_facta_ad"] = 0
+                
+        except Exception:
+            # Em caso de erro, manter valores em zero
+            ura_count = 0
+            ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+            ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+            st.session_state["producao_facta_ura"] = 0.0
+            st.session_state["total_vendas_facta_ura"] = 0
+            st.session_state["producao_facta_whatsapp"] = 0.0
+            st.session_state["total_vendas_facta_whatsapp"] = 0
+            st.session_state["producao_facta_ad"] = 0.0
+            st.session_state["total_vendas_facta_ad"] = 0
+                
+            # Processar dados do WhatsApp e AD silenciosamente
+            try:
+                whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
+                ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+                
+                # Processar WhatsApp na Facta
+                if whatsapp_count > 0:
+                    cpfs_whatsapp_para_consulta = set()
+                    if centro_custo_selecionado == "Novo":
+                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('Novo', set())
+                    elif centro_custo_selecionado == "FGTS":
+                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('FGTS', set())
+                    elif centro_custo_selecionado == "Crédito CLT":
+                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('CLT', set())
+                    else:
+                        for cpfs_status in whatsapp_cpfs_por_status.values():
+                            cpfs_whatsapp_para_consulta.update(cpfs_status)
                     
-                    with col_export_cpf3:
-                        if resultado_cpfs['extra']:
-                            df_cpfs_extra_export = pd.DataFrame(list(resultado_cpfs['extra']), columns=['CPF'])
-                            csv_cpfs_extra = df_cpfs_extra_export.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Exportar CPFs Extra",
-                                data=csv_cpfs_extra,
-                                file_name=f"cpfs_extra_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv"
+                    if cpfs_whatsapp_para_consulta:
+                        try:
+                            propostas_facta_whatsapp = consultar_facta_multiplos_cpfs(
+                                list(cpfs_whatsapp_para_consulta), 
+                                token=None, 
+                                max_workers=3, 
+                                data_ini=data_ini, 
+                                data_fim=data_fim
                             )
+                            
+                            if propostas_facta_whatsapp:
+                                analise_facta_whatsapp = analisar_propostas_facta(propostas_facta_whatsapp)
+                                st.session_state["producao_facta_whatsapp"] = analise_facta_whatsapp['valor_total_propostas']
+                                st.session_state["total_vendas_facta_whatsapp"] = analise_facta_whatsapp['total_propostas']
+                            else:
+                                st.session_state["producao_facta_whatsapp"] = 0.0
+                                st.session_state["total_vendas_facta_whatsapp"] = 0
+                        except Exception:
+                            st.session_state["producao_facta_whatsapp"] = 0.0
+                            st.session_state["total_vendas_facta_whatsapp"] = 0
+                    else:
+                        st.session_state["producao_facta_whatsapp"] = 0.0
+                        st.session_state["total_vendas_facta_whatsapp"] = 0
+                else:
+                    st.session_state["producao_facta_whatsapp"] = 0.0
+                    st.session_state["total_vendas_facta_whatsapp"] = 0
                 
-            elif not telefones_base:
-                st.warning("⚠️ Nenhum telefone válido encontrado na base carregada.")
-            elif not telefones_kolmeya:
-                st.warning("⚠️ Nenhum telefone encontrado nos dados do Kolmeya para o período selecionado.")
-                
-        except Exception as e:
-            st.error(f"Erro ao ler o arquivo: {e}. Tente salvar o arquivo como CSV separado por ponto e vírgula (;) ou Excel.")
+                # Processar AD na Facta
+                if ad_count > 0:
+                    cpfs_ad_para_consulta = set()
+                    if centro_custo_selecionado == "Novo":
+                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('Novo', set())
+                    elif centro_custo_selecionado == "FGTS":
+                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('FGTS', set())
+                    elif centro_custo_selecionado == "Crédito CLT":
+                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('CLT', set())
+                    else:
+                        for cpfs_status in ad_cpfs_por_status.values():
+                            cpfs_ad_para_consulta.update(cpfs_status)
+                    
+                    if cpfs_ad_para_consulta:
+                        try:
+                            propostas_facta_ad = consultar_facta_multiplos_cpfs(
+                                list(cpfs_ad_para_consulta), 
+                                token=None, 
+                                max_workers=3, 
+                                data_ini=data_ini, 
+                                data_fim=data_fim
+                            )
+                            
+                            if propostas_facta_ad:
+                                analise_facta_ad = analisar_propostas_facta(propostas_facta_ad)
+                                st.session_state["producao_facta_ad"] = analise_facta_ad['valor_total_propostas']
+                                st.session_state["total_vendas_facta_ad"] = analise_facta_ad['total_propostas']
+                            else:
+                                st.session_state["producao_facta_ad"] = 0.0
+                                st.session_state["total_vendas_facta_ad"] = 0
+                        except Exception:
+                            st.session_state["producao_facta_ad"] = 0.0
+                            st.session_state["total_vendas_facta_ad"] = 0
+                    else:
+                        st.session_state["producao_facta_ad"] = 0.0
+                        st.session_state["total_vendas_facta_ad"] = 0
+                else:
+                    st.session_state["producao_facta_ad"] = 0.0
+                    st.session_state["total_vendas_facta_ad"] = 0
+                    
+            except Exception:
+                st.session_state["producao_facta_whatsapp"] = 0.0
+                st.session_state["total_vendas_facta_whatsapp"] = 0
+                st.session_state["producao_facta_ad"] = 0.0
+                st.session_state["total_vendas_facta_ad"] = 0
+        except Exception:
+            # Em caso de erro, manter valores em zero
+            ura_count = 0
+            ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+            ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+            st.session_state["producao_facta_ura"] = 0.0
+            st.session_state["total_vendas_facta_ura"] = 0
+            st.session_state["producao_facta_whatsapp"] = 0.0
+            st.session_state["total_vendas_facta_whatsapp"] = 0
+            st.session_state["producao_facta_ad"] = 0.0
+            st.session_state["total_vendas_facta_ad"] = 0
+    else:
+        # Se não há arquivo carregado, deixar o painel 4NET vazio
+        ura_count = 0
+        ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+        ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
 
-    gc.collect()
+    # CONSULTA ADICIONAL NA FACTA PARA FGTS (COM CPFs DO KOLMEYA)
+    
+    # CONSULTA ADICIONAL NA FACTA PARA FGTS (COM CPFs DO KOLMEYA)
+    if centro_custo_selecionado == "FGTS" and messages:
+        # Extrair CPFs do Kolmeya
+        cpfs_kolmeya = extrair_cpfs_kolmeya(messages)
+        
+        if cpfs_kolmeya:
+            # Consultar Facta para os CPFs do Kolmeya
+            try:
+                propostas_facta_kolmeya = consultar_facta_multiplos_cpfs(
+                    list(cpfs_kolmeya), 
+                    token=None, 
+                    max_workers=3, 
+                    data_ini=data_ini, 
+                    data_fim=data_fim
+                )
+                
+                # Analisar resultados da Facta para CPFs do Kolmeya
+                if propostas_facta_kolmeya:
+                    analise_facta_kolmeya = analisar_propostas_facta(propostas_facta_kolmeya)
+                    
+                    # Manter dados separados para os painéis
+                    st.session_state["producao_facta_kolmeya"] = analise_facta_kolmeya['valor_total_propostas']
+                    st.session_state["total_vendas_facta_kolmeya"] = analise_facta_kolmeya['total_propostas']
+                    
+                    # Calcular totais para FGTS
+                    producao_total = st.session_state.get("producao_facta_ura", 0.0) + analise_facta_kolmeya['valor_total_propostas']
+                    vendas_total = st.session_state.get("total_vendas_facta_ura", 0) + analise_facta_kolmeya['total_propostas']
+                    
+                    st.session_state["producao_facta_total"] = producao_total
+                    st.session_state["total_vendas_facta_total"] = vendas_total
+                    
+            except Exception:
+                pass
+    
+
+    
+
+
+
+    # Layout simplificado com HTML puro - sem componentes Streamlit
+    st.markdown("""
+    <style>
+    .dashboard-container {
+        display: flex;
+        gap: 20px;
+        margin: 20px 0;
+        flex-wrap: wrap;
+    }
+    .panel {
+        flex: 1;
+        min-width: 280px;
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 20px;
+        color: white;
+        font-family: Arial, sans-serif;
+    }
+    .panel-kolmeya {
+        background: linear-gradient(135deg, #2d1b69 0%, #1a103f 100%);
+        border: 1px solid #a259ff;
+    }
+    .panel-title {
+        text-align: center;
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 20px;
+        color: #fff;
+    }
+    .metric-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 15px;
+    }
+    .metric-item {
+        text-align: center;
+        flex: 1;
+    }
+    .metric-label {
+        font-size: 12px;
+        color: #ccc;
+        margin-bottom: 5px;
+    }
+    .metric-value {
+        font-size: 20px;
+        font-weight: bold;
+        color: #fff;
+    }
+    .metric-value-small {
+        font-size: 16px;
+        font-weight: bold;
+        color: #fff;
+    }
+    .details-section {
+        background: rgba(0,0,0,0.3);
+        border-radius: 6px;
+        padding: 15px;
+        margin: 15px 0;
+    }
+    .details-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+    }
+    .detail-item {
+        text-align: center;
+        padding: 8px;
+    }
+    .detail-label {
+        font-size: 11px;
+        color: #aaa;
+        margin-bottom: 3px;
+    }
+    .detail-value {
+        font-size: 14px;
+        color: #fff;
+        font-weight: bold;
+    }
+    .roi-section {
+        text-align: center;
+        margin-top: 15px;
+        padding: 10px;
+        background: rgba(255,255,255,0.1);
+        border-radius: 6px;
+    }
+    .roi-label {
+        font-size: 14px;
+        color: #ccc;
+        margin-bottom: 5px;
+    }
+    .roi-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #fff;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Dados reais do Kolmeya via API
+    total_mensagens = len(messages) if messages else 0
+    mensagens_entregues = len([msg for msg in messages if msg.get('status') == 'delivered']) if messages else 0
+    investimento = total_mensagens * 0.08
+    
+    # CAMPO 1: Taxa de 
+    taxa_entrega = (mensagens_entregues / total_mensagens * 100) if total_mensagens > 0 else 0.0
+    
+    # Dados reais do Kolmeya - usar dados da Facta quando disponíveis
+    if centro_custo_selecionado == "FGTS":
+        # Para FGTS, usar dados do Kolmeya da Facta
+        total_vendas = st.session_state.get("total_vendas_facta_kolmeya", 0)
+        producao = st.session_state.get("producao_facta_kolmeya", 0.0)
+    else:
+        # Para outros centros de custo, dados virão da Facta (URA)
+        total_vendas = 0  # Dados reais virão da Facta
+        producao = 0.0    # Dados reais virão da Facta
+    
+    # Previsão de faturamento (comissão de 17.1%)
+    previsao_faturamento = producao * 0.171
+    
+    # CAMPO 5: Ticket Médio - calculado com dados reais
+    if total_vendas > 0 and producao > 0:
+        ticket_medio = producao / total_vendas
+    else:
+        ticket_medio = 0.0
+    
+    # CAMPO 6: ROI - calculado com dados reais
+    if producao > 0 and investimento > 0:
+        roi = producao - investimento
+    else:
+        roi = 0.0
+    
+    disparos_por_lead = total_acessos / total_mensagens * 100 if total_mensagens > 0 else 0
+    
+    # CAMPO 2: Interação (Disparos por Lead) - dados reais da API
+    disparos_por_lead = total_acessos / total_mensagens * 100 if total_mensagens > 0 else 0
+
+
+    # Dados do painel 4NET baseados no filtro de centro de custo
+    # Filtrar dados da URA baseado no centro de custo selecionado
+    if centro_custo_selecionado == "Novo":
+        total_atendidas = ura_por_status.get('Novo', 0)
+        telefones_base = ura_por_status.get('Novo', 0)
+        ligacoes_realizadas = total_atendidas
+    elif centro_custo_selecionado == "FGTS":
+        total_atendidas = ura_por_status.get('FGTS', 0)
+        telefones_base = ura_por_status.get('FGTS', 0)
+        ligacoes_realizadas = total_atendidas
+    elif centro_custo_selecionado == "Crédito CLT":
+        total_atendidas = ura_por_status.get('CLT', 0)
+        telefones_base = ura_por_status.get('CLT', 0)
+        ligacoes_realizadas = total_atendidas
+    else:
+        # Se "TODOS", usar o total
+        total_atendidas = ura_count
+        telefones_base = ura_count
+        ligacoes_realizadas = ura_count
+    
+    # Valores baseados em dados reais ou estimativas conservadoras
+    lig_atendidas = 0.0  # Será calculado com base nos dados reais
+    total_investimento = ligacoes_realizadas * 0.15  # Custo por ligação
+    tempo_medio_resposta = 0.0  # Será calculado com base nos dados reais
+    
+    # Calcular métricas baseadas nos dados filtrados
+    taxa_ativacao = (total_atendidas / telefones_base * 100) if telefones_base > 0 else 0.0
+    
+    # Dados do painel 4NET - usar dados da Facta se disponíveis
+    if centro_custo_selecionado == "FGTS":
+        # Para FGTS, usar dados totais (URA + Kolmeya)
+        total_vendas_ura = st.session_state.get("total_vendas_facta_total", 0)
+        producao_ura = st.session_state.get("producao_facta_total", 0.0)
+    else:
+        # Para outros centros de custo, usar dados da URA
+        total_vendas_ura = st.session_state.get("total_vendas_facta_ura", 0)
+        producao_ura = st.session_state.get("producao_facta_ura", 0.0)
+    
+    # Calcular métricas baseadas nos dados da Facta
+    if total_vendas_ura > 0 and producao_ura > 0:
+        fat_med_venda = producao_ura / total_vendas_ura  # Faturamento médio por venda
+        retor_estimado = producao_ura * 0.171  # Retorno estimado (comissão de 17.1%)
+    else:
+        fat_med_venda = 0.0
+        retor_estimado = 0.0
+
+    roi_ura = producao_ura - total_investimento
+
+    # Dados do PAINEL WHATSAPP baseados nos dados reais da base e Facta
+    if uploaded_file is not None:
+        try:
+            df_base = ler_base(uploaded_file)
+            whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
+            
+            # Usar dados reais do WhatsApp
+            campanhas_realizadas = whatsapp_count  # Total de mensagens WhatsApp
+            camp_atendidas = (whatsapp_count / max(telefones_base, 1)) * 100 if telefones_base > 0 else 0.0  # Taxa de engajamento
+            total_investimento_novo = whatsapp_count * 0.20  # Custo por mensagem WhatsApp
+            tempo_medio_campanha = 2.5  # Tempo médio de resposta em horas
+            total_engajados = whatsapp_count  # Total de mensagens enviadas
+            
+            # Usar dados reais da Facta se disponíveis, senão usar estimativas
+            if st.session_state.get("producao_facta_whatsapp", 0) > 0:
+                # Dados reais da Facta
+                total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
+                producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
+                # Dados reais da Facta
+                total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
+                producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
+            else:
+                # Estimativas baseadas em conversão
+                total_vendas_novo = whatsapp_count * 0.15  # Estimativa de vendas (15% de conversão)
+                producao_novo = total_vendas_novo * 5000  # Produção estimada (ticket médio R$ 5.000)
+            
+            roi_novo = producao_novo - total_investimento_novo
+        except Exception as e:
+            print(f"Erro ao processar dados do WhatsApp: {e}")
+            # Fallback para valores padrão
+            campanhas_realizadas = 0
+            camp_atendidas = 0.0
+            total_investimento_novo = 0.0
+            tempo_medio_campanha = 0.0
+            total_engajados = 0
+            total_vendas_novo = 0
+            producao_novo = 0.0
+            roi_novo = 0.0
+    else:
+        # Se não há arquivo carregado, usar valores padrão
+        campanhas_realizadas = 0
+        camp_atendidas = 0.0
+        total_investimento_novo = 0.0
+        tempo_medio_campanha = 0.0
+        total_engajados = 0
+        total_vendas_novo = 0
+        producao_novo = 0.0
+        roi_novo = 0.0
+
+    # Dados do TERCEIRO PAINEL baseados nos dados reais da base e Facta
+    if uploaded_file is not None:
+        try:
+            df_base = ler_base(uploaded_file)
+            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+            
+            # Usar dados reais do AD
+            acoes_realizadas = ad_count  # Total de ações AD
+            acoes_efetivas = (ad_count / max(telefones_base, 1)) * 100 if telefones_base > 0 else 0.0  # Taxa de efetividade
+            total_investimento_segundo = ad_count * 0.25  # Custo por ação AD
+            tempo_medio_acao = 3.0  # Tempo médio de resposta em horas
+            total_efetivos = ad_count  # Total de ações realizadas
+            
+            # Usar dados reais da Facta se disponíveis, senão usar estimativas
+            if st.session_state.get("producao_facta_ad", 0) > 0:
+                # Dados reais da Facta
+                total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
+                producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
+                # Dados reais da Facta
+                total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
+                producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
+            else:
+                # Estimativas baseadas em conversão
+                total_vendas_segundo = ad_count * 0.12  # Estimativa de vendas (12% de conversão)
+                producao_segundo = total_vendas_segundo * 4500  # Produção estimada (ticket médio R$ 4.500)
+            
+            roi_segundo = producao_segundo - total_investimento_segundo
+        except Exception as e:
+            print(f"Erro ao processar dados do AD: {e}")
+            # Fallback para valores padrão
+            acoes_realizadas = 0
+            acoes_efetivas = 0.0
+            total_investimento_segundo = 0.0
+            tempo_medio_acao = 0.0
+            total_efetivos = 0
+            total_vendas_segundo = 0
+            producao_segundo = 0.0
+            roi_segundo = 0.0
+    else:
+        # Se não há arquivo carregado, usar valores padrão
+        acoes_realizadas = 0
+        acoes_efetivas = 0.0
+        total_investimento_segundo = 0.0
+        tempo_medio_acao = 0.0
+        total_efetivos = 0
+        total_vendas_segundo = 0
+        producao_segundo = 0.0
+        roi_segundo = 0.0
+
+    # SALVAR MÉTRICAS NO BANCO DE DADOS
+    if HAS_DATABASE:
+        try:
+            # Preparar dados para salvar
+            dados_kolmeya = {
+                'canal': 'Kolmeya',
+                'sms_enviados': total_mensagens,
+                'interacoes': disparos_por_lead,
+                'investimento': investimento,
+                'taxa_entrega': taxa_entrega,
+                'total_vendas': total_vendas,
+                'producao': producao,
+                'leads_gerados': telefones_base,
+                'ticket_medio': ticket_medio,
+                'roi': roi
+            }
+            
+            dados_4net = {
+                'canal': '4NET',
+                'sms_enviados': 0,
+                'interacoes': 0.0,
+                'investimento': total_investimento,
+                'taxa_entrega': 0.0,
+                'total_vendas': total_vendas_ura,
+                'producao': producao_ura,
+                'leads_gerados': telefones_base,
+                'ticket_medio': fat_med_venda,
+                'roi': roi_ura
+            }
+            
+            dados_whatsapp = {
+                'canal': 'WhatsApp',
+                'sms_enviados': campanhas_realizadas,
+                'interacoes': camp_atendidas,
+                'investimento': total_investimento_novo,
+                'taxa_entrega': tempo_medio_campanha,
+                'producao': producao_novo,
+                'total_vendas': total_vendas_novo,
+                'leads_gerados': total_engajados,
+                'ticket_medio': producao_novo/total_vendas_novo if total_vendas_novo > 0 else 0,
+                'roi': roi_novo
+            }
+            
+            dados_ad = {
+                'canal': 'AD',
+                'sms_enviados': acoes_realizadas,
+                'interacoes': acoes_efetivas,
+                'investimento': total_investimento_segundo,
+                'taxa_entrega': tempo_medio_acao,
+                'total_vendas': total_vendas_segundo,
+                'producao': producao_segundo,
+                'leads_gerados': total_efetivos,
+                'ticket_medio': producao_segundo/total_vendas_segundo if total_vendas_segundo > 0 else 0,
+                'roi': roi_segundo
+            }
+            
+            # Salvar no banco de dados
+            salvar_metricas_dashboard(
+                dados_kolmeya, dados_4net, dados_whatsapp, dados_ad,
+                centro_custo_selecionado, data_ini, data_fim
+            )
+            
+        except Exception as e:
+            print(f"⚠️ Erro ao salvar métricas no banco: {e}")
+    
+    # Dashboard HTML usando st.components.html para melhor renderização
+    import streamlit.components.v1 as components
+    
+    dashboard_html = f"""
+    <style>
+    .dashboard-container {{
+        display: flex;
+        gap: 15px;
+        margin: 10px 0;
+        flex-wrap: wrap;
+        justify-content: space-between;
+    }}
+    .panel {{
+        flex: 1;
+        min-width: 250px;
+        max-width: 300px;
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 15px;
+        color: white;
+        font-family: Arial, sans-serif;
+        margin-bottom: 10px;
+    }}
+    .panel-kolmeya {{
+        background: linear-gradient(135deg, #2d1b69 0%, #1a103f 100%);
+        border: 1px solid #a259ff;
+    }}
+    .panel-title {{
+        text-align: center;
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 15px;
+        color: #fff;
+    }}
+    .metric-row {{
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }}
+    .metric-item {{
+        text-align: center;
+        flex: 1;
+    }}
+    .metric-label {{
+        font-size: 11px;
+        color: #ccc;
+        margin-bottom: 3px;
+    }}
+    .metric-value {{
+        font-size: 18px;
+        font-weight: bold;
+        color: #fff;
+    }}
+    .metric-value-small {{
+        font-size: 14px;
+        font-weight: bold;
+        color: #fff;
+    }}
+    .details-section {{
+        background: rgba(0,0,0,0.3);
+        border-radius: 6px;
+        padding: 12px;
+        margin: 12px 0;
+    }}
+    .details-grid {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }}
+    .detail-item {{
+        text-align: center;
+        padding: 6px;
+    }}
+    .detail-label {{
+        font-size: 10px;
+        color: #aaa;
+        margin-bottom: 2px;
+    }}
+    .detail-value {{
+        font-size: 12px;
+        color: #fff;
+        font-weight: bold;
+    }}
+    .roi-section {{
+        text-align: center;
+        margin-top: 12px;
+        padding: 8px;
+        background: rgba(255,255,255,0.1);
+        border-radius: 6px;
+    }}
+    .roi-label {{
+        font-size: 12px;
+        color: #ccc;
+        margin-bottom: 3px;
+    }}
+    .roi-value {{
+        font-size: 20px;
+        font-weight: bold;
+        color: #fff;
+    }}
+    </style>
+    
+    <div class="dashboard-container">
+        <!-- PAINEL KOLMEYA -->
+        <div class="panel panel-kolmeya">
+            <div class="panel-title">KOLMEYA</div>
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-label">SMS Enviados</div>
+                    <div class="metric-value">{total_mensagens:,}</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">Interação</div>
+                    <div class="metric-value">{disparos_por_lead:.1f}%</div>
+                </div>
+            </div>
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-label">Investimento</div>
+                    <div class="metric-value-small">{formatar_real(investimento)}</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">Taxa Entrega</div>
+                    <div class="metric-value-small">{taxa_entrega:.1f}%</div>
+                </div>
+            </div>
+            <div class="details-section">
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <div class="detail-label">Total Vendas</div>
+                        <div class="detail-value">{total_vendas}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Produção</div>
+                        <div class="detail-value">{formatar_real(producao)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Leads Gerados</div>
+                        <div class="detail-value">{telefones_base:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Ticket Médio</div>
+                        <div class="detail-value">{formatar_real(ticket_medio)}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="roi-section">
+                <div class="roi-label">ROI</div>
+                <div class="roi-value">{formatar_real(roi)}</div>
+            </div>
+        </div>
+
+        <!-- PAINEL 4NET -->
+        <div class="panel">
+            <div class="panel-title">4NET</div>
+            {f"""
+                            <div class="metric-row">
+                    <div class="metric-item">
+                        <div class="metric-label">Ligações</div>
+                        <div class="metric-value">0</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Atendidas</div>
+                        <div class="metric-value">0.0</div>
+                    </div>
+                </div>
+                <div class="metric-row">
+                    <div class="metric-item">
+                        <div class="metric-label">Investimento</div>
+                        <div class="metric-value-small">0,00</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Tempo Médio</div>
+                        <div class="metric-value-small">00:00h</div>
+                    </div>
+                </div>
+            <div class="details-section">
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <div class="detail-label">Total vendas</div>
+                        <div class="detail-value">{total_vendas_ura}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Leads Gerados</div>
+                        <div class="detail-value">{telefones_base:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">ticket medio</div>
+                        <div class="detail-value">{formatar_real(producao_ura / max(total_vendas_ura, 1))}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Fat. med venda</div>
+                        <div class="detail-value">{formatar_real(fat_med_venda)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Produção</div>
+                        <div class="detail-value">{formatar_real(producao_ura)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">retorno estimado</div>
+                        <div class="detail-value">{formatar_real(retor_estimado)}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="roi-section">
+                <div class="roi-label">ROI</div>
+                <div class="roi-value">0,00</div>
+            </div>
+            """ if uploaded_file is not None else """
+            <div style="text-align: center; padding: 40px 20px; color: #888;">
+                <div style="font-size: 48px; margin-bottom: 20px;">📁</div>
+                <div style="font-size: 18px; margin-bottom: 10px;">Carregue uma base de dados</div>
+                <div style="font-size: 14px;">para visualizar as métricas do 4NET</div>
+            </div>
+            """}
+        </div>
+
+        <!-- PAINEL WHATSAPP -->
+        <div class="panel">
+            <div class="panel-title">PAINEL WHATSAPP</div>
+            {f"""
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-label">Mensagens enviadas</div>
+                    <div class="metric-value">0</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">interações</div>
+                    <div class="metric-value">0</div>
+                </div>
+            </div>
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-label">Investimento</div>
+                    <div class="metric-value-small">0,00</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">Taxa de Entrega</div>
+                    <div class="metric-value-small">0,00</div>
+                </div>
+            </div>
+            <div class="details-section">
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <div class="detail-label">Total Vendas</div>
+                        <div class="detail-value">{total_vendas_novo:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Produção</div>
+                        <div class="detail-value">{formatar_real(producao_novo)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Leads Gerados</div>
+                        <div class="detail-value">{total_engajados:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Ticket Médio</div>
+                        <div class="detail-value">{formatar_real(producao_novo/total_vendas_novo if total_vendas_novo > 0 else 0)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Retorno Estimado</div>
+                        <div class="detail-value">{formatar_real(producao_novo * 0.171)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Fat. Med Venda</div>
+                        <div class="detail-value">{formatar_real(producao_novo/total_vendas_novo if total_vendas_novo > 0 else 0)}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="roi-section">
+                <div class="roi-label">ROI</div>
+                <div class="roi-value">0,00</div>
+            </div>
+            """ if uploaded_file is not None else """
+            <div style="text-align: center; padding: 40px 20px; color: #888;">
+                <div style="font-size: 48px; margin-bottom: 20px;">📱</div>
+                <div style="font-size: 18px; margin-bottom: 10px;">Carregue uma base de dados</div>
+                <div style="font-size: 14px;">para visualizar as métricas do WhatsApp</div>
+            </div>
+            """}
+        </div>
+
+        <!-- PAINEL AD -->
+        <div class="panel">
+            <div class="panel-title">PAINEL AD</div>
+            {f"""
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-label">Ações</div>
+                    <div class="metric-value">0</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">Efetivas</div>
+                    <div class="metric-value">0</div>
+                </div>
+            </div>
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-label">Investimento</div>
+                    <div class="metric-value-small">0,00</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">Tempo Médio</div>
+                    <div class="metric-value-small">0,00</div>
+                </div>
+            </div>
+            <div class="details-section">
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <div class="detail-label">Leads gerados</div>
+                        <div class="detail-value">{total_efetivos:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Total Vendas</div>
+                        <div class="detail-value">{total_vendas_segundo:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Produção</div>
+                        <div class="detail-value">{formatar_real(producao_segundo)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Ticket Médio</div>
+                        <div class="detail-value">{formatar_real(producao_segundo/total_vendas_segundo if total_vendas_segundo > 0 else 0)}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="roi-section">
+                <div class="roi-label">ROI</div>
+                <div class="roi-value">{formatar_real(roi_segundo)}</div>
+            </div>
+            """ if uploaded_file is not None else """
+            <div style="text-align: center; padding: 40px 20px; color: #888;">
+                <div style="font-size: 48px; margin-bottom: 20px;">📢</div>
+                <div style="font-size: 18px; margin-bottom: 10px;">Carregue uma base de dados</div>
+                <div style="font-size: 14px;">para visualizar as métricas do AD</div>
+            </div>
+            """}
+        </div>
+    </div>
+    """
+    
+    components.html(dashboard_html, height=800)
+    ligacoes_realizadas = 0
+    lig_atendidas = 0.0
+    total_investimento = 0.0
+    tempo_medio_resposta = 0.0
+    taxa_lead = 0.0
+    total_atendidas = 0
+            
+    # Inicializar variáveis
+    total_leads_gerados = 0
+    telefones_base = 0
+            
+    taxa_ativacao = 0.0
+    total_vendas = 0.0
+    total_leads_venda = 0.0
+    lig_venda = 0.0
+    leads_vendas = 0.0
+    producao_ura = 0.0
+    ticket_ura = 0.0
+    roi_ura = 0.0
+    retorno_estimado = 0.0
+    custo_por_lead = 0.0
+    custo_venda = 0.0
+    media_venda = 0.0
+
+    # Upload de base local (seção de comparação)
+    if uploaded_file is not None:
+        try:
+            df_base = ler_base(uploaded_file)
+            
+            # Extrair telefones da base carregada (com filtro de data) - usar variável diferente
+            telefones_base_todos = extrair_telefones_da_base(df_base, data_ini, data_fim)
+            
+            # Extrair CPFs da base carregada (com filtro de data)
+            cpfs_base = extrair_cpfs_da_base(df_base, data_ini, data_fim)
+            
+            # Extrair telefones do Kolmeya (usando os dados filtrados por data)
+            telefones_kolmeya = extrair_telefones_kolmeya(messages)
+            
+            # Extrair CPFs do Kolmeya (usando os dados filtrados por data)
+            cpfs_kolmeya = extrair_cpfs_kolmeya(messages)
+            
+            # CALCULAR LEADS GERADOS BASEADO NA COMPARAÇÃO BASE VS KOLMEYA
+            if messages:
+                # Calcular telefones coincidentes (iguais) entre base e Kolmeya
+                telefones_coincidentes = set(telefones_base_todos) & set(telefones_kolmeya)
+                total_leads_gerados = len(telefones_coincidentes)
+                telefones_base = total_leads_gerados
+                
+                print(f"🔍 Leads Gerados - Base: {len(telefones_base_todos)}, Kolmeya: {len(telefones_kolmeya)}, Coincidentes: {total_leads_gerados}")
+            else:
+                # Se não há mensagens do Kolmeya, usar apenas dados da URA
+                if centro_custo_selecionado == "Novo":
+                    total_leads_gerados = ura_por_status.get('Novo', 0)
+                elif centro_custo_selecionado == "FGTS":
+                    total_leads_gerados = ura_por_status.get('FGTS', 0)
+                elif centro_custo_selecionado == "Crédito CLT":
+                    total_leads_gerados = ura_por_status.get('CLT', 0)
+                else:
+                    total_leads_gerados = ura_count
+                telefones_base = total_leads_gerados
+            
+
+
+        except Exception:
+            pass
+    else:
+        # Se não há base carregada, usar apenas dados da URA
+        if centro_custo_selecionado == "Novo":
+            total_leads_gerados = ura_por_status.get('Novo', 0)
+        elif centro_custo_selecionado == "FGTS":
+            total_leads_gerados = ura_por_status.get('FGTS', 0)
+        elif centro_custo_selecionado == "Crédito CLT":
+            total_leads_gerados = ura_por_status.get('CLT', 0)
+        else:
+            total_leads_gerados = ura_count
+        telefones_base = total_leads_gerados
 
 if __name__ == "__main__":
-    main() 
+    main()
