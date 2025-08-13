@@ -31,9 +31,6 @@ except ImportError:
 
 KOLMEYA_TOKEN_DIRETO = ""  # Coloque seu token aqui para testes
 
-# Token de teste da documentação (apenas para debug)
-KOLMEYA_TOKEN_TESTE = "4YyZFPMQHW0LZeKiGAqe705cLPweuJKIWFtKAyuj"
-
 # Função para obter o token da API
 def get_kolmeya_token():
     """Retorna o token da API do Kolmeya."""
@@ -45,7 +42,6 @@ def get_kolmeya_token():
         token = KOLMEYA_TOKEN_DIRETO
         print("⚠️ Usando token configurado diretamente no código (não recomendado para produção)")
     
-    print(f"🔍 DEBUG - Token obtido: {token[:10]}..." if token else "🔍 DEBUG - Token não encontrado")
     return token
 
 # Função para obter o token da API da Facta
@@ -439,77 +435,17 @@ def obter_saldo_kolmeya(token=None):
             "Accept": "application/json"
         }
         
-        print(f"🔍 DEBUG - Testando conexão com API (saldo): {url}")
         resp = requests.get(url, headers=headers, timeout=30)
-        
-        print(f"🔍 DEBUG - Status da requisição de saldo: {resp.status_code}")
-        if resp.status_code != 200:
-            print(f"🔍 DEBUG - Erro na requisição de saldo: {resp.text}")
         
         if resp.status_code == 200:
             data = resp.json()
             saldo = data.get("balance", 0.0)
-            print(f"🔍 DEBUG - Saldo obtido: {saldo}")
             return float(saldo)
         else:
             return 0.0
             
     except Exception as e:
-        print(f"🔍 DEBUG - Erro ao obter saldo: {e}")
         return 0.0
-
-def testar_conexao_kolmeya():
-    """Testa a conexão com a API do Kolmeya."""
-    print("🧪 TESTE DE CONEXÃO COM API KOLMEYA")
-    
-    token = get_kolmeya_token()
-    if not token:
-        print("❌ Token não encontrado")
-        return False
-    
-    # Teste 1: Verificar saldo
-    saldo = obter_saldo_kolmeya(token)
-    print(f"💰 Saldo: {saldo}")
-    
-    # Teste 2: Fazer uma requisição de teste para o endpoint de status
-    try:
-        url = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        
-        # Fazer uma requisição para os últimos 7 dias
-        data_atual = datetime.now()
-        data_7_dias_atras = data_atual - timedelta(days=7)
-        
-        body = {
-            "start_at": data_7_dias_atras.strftime('%Y-%m-%d 00:00'),
-            "end_at": data_atual.strftime('%Y-%m-%d %H:%M'),
-            "limit": 100  # Limitar para teste
-        }
-        
-        print(f"🧪 Testando requisição de status:")
-        print(f"   📤 Body: {body}")
-        
-        resp = requests.post(url, headers=headers, json=body, timeout=30)
-        
-        print(f"   📊 Status: {resp.status_code}")
-        print(f"   📋 Resposta: {resp.text[:500]}...")
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            messages = data.get("messages", [])
-            print(f"   ✅ Sucesso! {len(messages)} mensagens encontradas")
-            return True
-        else:
-            print(f"   ❌ Erro na API: {resp.status_code}")
-            return False
-            
-    except Exception as e:
-        print(f"   ❌ Erro no teste: {e}")
-        return False
 
 def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     """Consulta o endpoint Kolmeya para status de SMS."""
@@ -526,18 +462,6 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     else:
         end_at = data_fim.strftime('%Y-%m-%d 23:59')
         print(f"🔍 DEBUG - Data final não é hoje, usando 23:59: {end_at}")
-    
-    # Verificar se o período é válido (não pode ser futuro)
-    current_time = datetime.now()
-    start_dt = datetime.strptime(start_at, '%Y-%m-%d %H:%M')
-    end_dt = datetime.strptime(end_at, '%Y-%m-%d %H:%M')
-    
-    if end_dt > current_time:
-        print(f"⚠️ DEBUG - Período final é futuro, ajustando para horário atual")
-        end_at = current_time.strftime('%Y-%m-%d %H:%M')
-        print(f"🔍 DEBUG - Novo end_at: {end_at}")
-    
-    print(f"🔍 DEBUG - Período final para consulta: {start_at} a {end_at}")
     
     print(f"🔍 Consultando API real do Kolmeya:")
     print(f"   📅 Período: {start_at} a {end_at}")
@@ -562,16 +486,13 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
         return [], 0
 
 def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tenant_segment_id=None):
-    """Consulta o status das mensagens SMS enviadas via Kolmeya."""
+    """Consulta o status das mensagens SMS en runviadas via Kolmeya."""
     if token is None:
         token = get_kolmeya_token()
     
     if not token:
         print("❌ Token do Kolmeya não encontrado")
         return []
-    
-    # Teste adicional: verificar se o token é válido
-    print(f"🔍 DEBUG - Verificando token: {token[:20]}..." if len(token) > 20 else f"🔍 DEBUG - Token: {token}")
     
     # Verificar se o período não excede 7 dias
     try:
@@ -600,23 +521,13 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
     }
     
     try:
-        print(f"🔍 DEBUG - Fazendo requisição para a API:")
-        print(f"   🌐 URL: {url}")
-        print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Nenhum")
-        print(f"   📤 Body: {body}")
-        
         resp = requests.post(url, headers=headers, json=body, timeout=30)
-        
-        print(f"🔍 DEBUG - Resposta da API:")
-        print(f"   📊 Status Code: {resp.status_code}")
-        print(f"   📋 Headers: {dict(resp.headers)}")
         
         if resp.status_code == 200:
             data = resp.json()
             messages = data.get("messages", [])
             
             print(f"✅ Resposta recebida: {len(messages)} mensagens")
-            print(f"🔍 DEBUG - Resposta completa: {data}")
             
             # Debug: Verificar detalhes da resposta
             if messages and len(messages) > 0:
@@ -629,10 +540,6 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
                 print(f"   📋 Status da primeira: {messages[0].get('status', 'N/A')}")
             else:
                 print(f"⚠️ DEBUG - Nenhuma mensagem retornada para o período: {start_at} a {end_at}")
-                print(f"🔍 DEBUG - Resposta vazia ou sem mensagens: {data}")
-        else:
-            print(f"❌ DEBUG - Erro na API: Status {resp.status_code}")
-            print(f"🔍 DEBUG - Resposta de erro: {resp.text}")
             
             # Filtrar por centro de custo se especificado
             if tenant_segment_id and messages:
@@ -932,11 +839,6 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     print(f"   📅 Data final: {data_fim} -> {data_fim_dt}")
     print(f"   📊 Mensagens antes do filtro: {len(messages)}")
     
-    # Se estamos filtrando para o dia atual, ser menos restritivo
-    is_current_day = data_fim == datetime.now().date()
-    if is_current_day:
-        print(f"🔍 DEBUG - Filtrando para o dia atual, sendo menos restritivo")
-    
     mensagens_filtradas = []
     mensagens_processadas = 0
     
@@ -960,11 +862,6 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
                             if mensagens_processadas <= 5:  # Mostrar apenas as primeiras 5 para debug
                                 print(f"   ❌ Mensagem fora do período: {data_str} (criada em {data_criacao})")
                                 print(f"      Comparação: {data_ini_dt} <= {data_criacao} <= {data_fim_dt}")
-                                
-                                # Se é o dia atual e a mensagem é de hoje, incluir mesmo assim
-                                if is_current_day and data_criacao.date() == datetime.now().date():
-                                    print(f"   🔄 Incluindo mensagem do dia atual mesmo fora do período exato")
-                                    mensagens_filtradas.append(msg)
                 except (ValueError, TypeError) as e:
                     print(f"   ⚠️ Erro ao processar data '{data_str}': {e}")
                     continue
@@ -1589,12 +1486,14 @@ def main():
     if HAS_AUTOREFRESH:
         st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")
     
-    # Testar conexão com a API do Kolmeya
-    print("🔍 Iniciando teste de conexão com API Kolmeya...")
-    testar_conexao_kolmeya()
-    
     # Adicionar teste de ambiente na sidebar
     test_environment_status()
+    
+    # IMPORTANTE: Separação clara dos dados por painel:
+    # - PAINEL KOLMEYA: Dados da API do Kolmeya (SMS enviados)
+    # - PAINEL 4NET: Dados da URA (UTM source = "URA") - SEMPRE separado do Kolmeya
+    # - PAINEL WHATSAPP: Dados do WhatsApp (UTM source = "WHATSAPP_MKT")
+    # - PAINEL AD: Dados de anúncios (UTM source = "ad")
     
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
@@ -1701,7 +1600,7 @@ def main():
             # Extrair telefones da base
             telefones_base_temp = extrair_telefones_da_base(uploaded_file, data_ini, data_fim)
             
-            # Por enquanto, usar apenas dados da URA até obter mensagens do Kolmeya
+            # Para o painel 4NET, usar APENAS dados da URA (UTM source = "URA")
             if centro_custo_selecionado == "Novo":
                 total_leads_gerados = ura_por_status.get('Novo', 0)
             elif centro_custo_selecionado == "FGTS":
@@ -1716,7 +1615,7 @@ def main():
             
         except Exception as e:
             print(f"Erro ao calcular telefones coincidentes: {e}")
-            # Fallback para dados da URA
+            # Fallback para dados da URA (painel 4NET)
             if centro_custo_selecionado == "Novo":
                 total_leads_gerados = ura_por_status.get('Novo', 0)
             elif centro_custo_selecionado == "FGTS":
@@ -1727,7 +1626,7 @@ def main():
                 total_leads_gerados = ura_count
             telefones_base = total_leads_gerados
     else:
-        # Se não há base ou mensagens, usar apenas dados da URA
+        # Se não há base ou mensagens, usar apenas dados da URA (painel 4NET)
         if centro_custo_selecionado == "Novo":
             total_leads_gerados = ura_por_status.get('Novo', 0)
         elif centro_custo_selecionado == "FGTS":
@@ -2012,7 +1911,7 @@ def main():
             st.session_state["producao_facta_ad"] = 0.0
             st.session_state["total_vendas_facta_ad"] = 0
     else:
-        # Se não há arquivo carregado, deixar o painel 4NET vazio
+        # Se não há arquivo carregado, deixar o painel 4NET vazio (sem dados URA)
         ura_count = 0
         ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
         ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
@@ -2206,24 +2105,24 @@ def main():
     disparos_por_lead = total_acessos / total_mensagens * 100 if total_mensagens > 0 else 0
 
 
-    # Dados do painel 4NET baseados no filtro de centro de custo
+    # Dados do painel 4NET baseados APENAS nos dados da URA (UTM source = "URA")
     # Filtrar dados da URA baseado no centro de custo selecionado
     if centro_custo_selecionado == "Novo":
         total_atendidas = ura_por_status.get('Novo', 0)
-        telefones_base = ura_por_status.get('Novo', 0)
+        telefones_base_ura = ura_por_status.get('Novo', 0)
         ligacoes_realizadas = total_atendidas
     elif centro_custo_selecionado == "FGTS":
         total_atendidas = ura_por_status.get('FGTS', 0)
-        telefones_base = ura_por_status.get('FGTS', 0)
+        telefones_base_ura = ura_por_status.get('FGTS', 0)
         ligacoes_realizadas = total_atendidas
     elif centro_custo_selecionado == "Crédito CLT":
         total_atendidas = ura_por_status.get('CLT', 0)
-        telefones_base = ura_por_status.get('CLT', 0)
+        telefones_base_ura = ura_por_status.get('CLT', 0)
         ligacoes_realizadas = total_atendidas
     else:
-        # Se "TODOS", usar o total
+        # Se "TODOS", usar o total da URA
         total_atendidas = ura_count
-        telefones_base = ura_count
+        telefones_base_ura = ura_count
         ligacoes_realizadas = ura_count
     
     # Valores baseados em dados reais ou estimativas conservadoras
@@ -2231,18 +2130,13 @@ def main():
     total_investimento = ligacoes_realizadas * 0.15  # Custo por ligação
     tempo_medio_resposta = 0.0  # Será calculado com base nos dados reais
     
-    # Calcular métricas baseadas nos dados filtrados
-    taxa_ativacao = (total_atendidas / telefones_base * 100) if telefones_base > 0 else 0.0
+    # Calcular métricas baseadas nos dados da URA (não misturar com Kolmeya)
+    taxa_ativacao = (total_atendidas / telefones_base_ura * 100) if telefones_base_ura > 0 else 0.0
     
-    # Dados do painel 4NET - usar dados da Facta se disponíveis
-    if centro_custo_selecionado == "FGTS":
-        # Para FGTS, usar dados totais (URA + Kolmeya)
-        total_vendas_ura = st.session_state.get("total_vendas_facta_total", 0)
-        producao_ura = st.session_state.get("producao_facta_total", 0.0)
-    else:
-        # Para outros centros de custo, usar dados da URA
-        total_vendas_ura = st.session_state.get("total_vendas_facta_ura", 0)
-        producao_ura = st.session_state.get("producao_facta_ura", 0.0)
+    # Dados do painel 4NET - usar APENAS dados da URA (não misturar com Kolmeya)
+    # Para todos os centros de custo, usar apenas dados da URA
+    total_vendas_ura = st.session_state.get("total_vendas_facta_ura", 0)
+    producao_ura = st.session_state.get("producao_facta_ura", 0.0)
     
     # Calcular métricas baseadas nos dados da Facta
     if total_vendas_ura > 0 and producao_ura > 0:
@@ -2252,6 +2146,7 @@ def main():
         fat_med_venda = 0.0
         retor_estimado = 0.0
 
+    # ROI do painel 4NET baseado APENAS nos dados da URA
     roi_ura = producao_ura - total_investimento
 
     # Dados do PAINEL WHATSAPP baseados nos dados reais da base e Facta
@@ -2630,21 +2525,21 @@ def main():
                             <div class="metric-row">
                     <div class="metric-item">
                         <div class="metric-label">Ligações</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value">{ligacoes_realizadas}</div>
                     </div>
                     <div class="metric-item">
                         <div class="metric-label">Atendidas</div>
-                        <div class="metric-value">0.0</div>
+                        <div class="metric-value">{total_atendidas}</div>
                     </div>
                 </div>
                 <div class="metric-row">
                     <div class="metric-item">
                         <div class="metric-label">Investimento</div>
-                        <div class="metric-value-small">0,00</div>
+                        <div class="metric-value-small">{formatar_real(total_investimento)}</div>
                     </div>
                     <div class="metric-item">
-                        <div class="metric-label">Tempo Médio</div>
-                        <div class="metric-value-small">00:00h</div>
+                        <div class="metric-label">Taxa Ativação</div>
+                        <div class="metric-value-small">{taxa_ativacao:.1f}%</div>
                     </div>
                 </div>
             <div class="details-section">
@@ -2655,7 +2550,7 @@ def main():
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">Leads Gerados</div>
-                        <div class="detail-value">{telefones_base:,}</div>
+                        <div class="detail-value">{telefones_base_ura:,}</div>
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">ticket medio</div>
@@ -2677,7 +2572,7 @@ def main():
             </div>
             <div class="roi-section">
                 <div class="roi-label">ROI</div>
-                <div class="roi-value">0,00</div>
+                <div class="roi-value">{formatar_real(roi_ura)}</div>
             </div>
             """ if uploaded_file is not None else """
             <div style="text-align: center; padding: 40px 20px; color: #888;">
@@ -2695,21 +2590,21 @@ def main():
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Mensagens enviadas</div>
-                    <div class="metric-value">0</div>
+                    <div class="metric-value">{campanhas_realizadas}</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-label">interações</div>
-                    <div class="metric-value">0</div>
+                    <div class="metric-label">Interações</div>
+                    <div class="metric-value">{camp_atendidas:.1f}%</div>
                 </div>
             </div>
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Investimento</div>
-                    <div class="metric-value-small">0,00</div>
+                    <div class="metric-value-small">{formatar_real(total_investimento_novo)}</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-label">Taxa de Entrega</div>
-                    <div class="metric-value-small">0,00</div>
+                    <div class="metric-label">Tempo Médio</div>
+                    <div class="metric-value-small">{tempo_medio_campanha:.1f}h</div>
                 </div>
             </div>
             <div class="details-section">
@@ -2742,7 +2637,7 @@ def main():
             </div>
             <div class="roi-section">
                 <div class="roi-label">ROI</div>
-                <div class="roi-value">0,00</div>
+                <div class="roi-value">{formatar_real(roi_novo)}</div>
             </div>
             """ if uploaded_file is not None else """
             <div style="text-align: center; padding: 40px 20px; color: #888;">
@@ -2760,21 +2655,21 @@ def main():
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Ações</div>
-                    <div class="metric-value">0</div>
+                    <div class="metric-value">{acoes_realizadas}</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-label">Efetivas</div>
-                    <div class="metric-value">0</div>
+                    <div class="metric-value">{acoes_efetivas:.1f}%</div>
                 </div>
             </div>
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Investimento</div>
-                    <div class="metric-value-small">0,00</div>
+                    <div class="metric-value-small">{formatar_real(total_investimento_segundo)}</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-label">Tempo Médio</div>
-                    <div class="metric-value-small">0,00</div>
+                    <div class="metric-value-small">{tempo_medio_acao:.1f}h</div>
                 </div>
             </div>
             <div class="details-section">
@@ -2873,7 +2768,7 @@ def main():
         except Exception:
             pass
     else:
-        # Se não há base carregada, usar apenas dados da URA
+        # Se não há base carregada, usar apenas dados da URA (painel 4NET)
         if centro_custo_selecionado == "Novo":
             total_leads_gerados = ura_por_status.get('Novo', 0)
         elif centro_custo_selecionado == "FGTS":
