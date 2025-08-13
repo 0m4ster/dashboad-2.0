@@ -2204,7 +2204,27 @@ def main():
         producao_segundo = 0.0
         roi_segundo = 0.0
 
-        # SALVAR MÉTRICAS NO BANCO DE DADOS - SISTEMA MELHORADO
+        # Inicializar variáveis que podem não estar definidas
+    taxa_lead = getattr(locals(), 'taxa_lead', 0.0)
+    ligacoes_realizadas = getattr(locals(), 'ligacoes_realizadas', 0)
+    total_investimento = getattr(locals(), 'total_investimento', 0.0)
+    tempo_medio_campanha = getattr(locals(), 'tempo_medio_campanha', 0.0)
+    camp_atendidas = getattr(locals(), 'camp_atendidas', 0.0)
+    total_investimento_novo = getattr(locals(), 'total_investimento_novo', 0.0)
+    total_vendas_novo = getattr(locals(), 'total_vendas_novo', 0)
+    producao_novo = getattr(locals(), 'producao_novo', 0.0)
+    total_engajados = getattr(locals(), 'total_engajados', 0)
+    roi_novo = getattr(locals(), 'roi_novo', 0.0)
+    acoes_realizadas = getattr(locals(), 'acoes_realizadas', 0)
+    acoes_efetivas = getattr(locals(), 'acoes_efetivas', 0.0)
+    total_investimento_segundo = getattr(locals(), 'total_investimento_segundo', 0.0)
+    tempo_medio_acao = getattr(locals(), 'tempo_medio_acao', 0.0)
+    total_vendas_segundo = getattr(locals(), 'total_vendas_segundo', 0)
+    producao_segundo = getattr(locals(), 'producao_segundo', 0.0)
+    total_efetivos = getattr(locals(), 'total_efetivos', 0)
+    roi_segundo = getattr(locals(), 'roi_segundo', 0.0)
+    
+    # SALVAR MÉTRICAS NO BANCO DE DADOS - SISTEMA MELHORADO
     if HAS_DATABASE:
         try:
             # Garantir que todos os valores sejam numéricos e precisos
@@ -2645,13 +2665,7 @@ def main():
     """
     
     components.html(dashboard_html, height=800)
-    ligacoes_realizadas = 0
-    lig_atendidas = 0.0
-    total_investimento = 0.0
-    tempo_medio_resposta = 0.0
-    taxa_lead = 0.0
-    total_atendidas = 0
-            
+    
     # Inicializar variáveis
     total_leads_gerados = 0
     telefones_base = 0
