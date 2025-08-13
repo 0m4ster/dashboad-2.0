@@ -454,7 +454,12 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     
     # Formatar datas para o formato esperado pela API
     start_at = data_ini.strftime('%Y-%m-%d 00:00')
-    end_at = data_fim.strftime('%Y-%m-%d 23:59')
+    
+    # Se a data final for hoje, usar o horário atual para pegar dados em tempo real
+    if data_fim == datetime.now().date():
+        end_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+    else:
+        end_at = data_fim.strftime('%Y-%m-%d 23:59')
     
     print(f"🔍 Consultando API real do Kolmeya:")
     print(f"   📅 Período: {start_at} a {end_at}")
@@ -1456,7 +1461,7 @@ def main():
     # Campos de período
     col_data_ini, col_data_fim = st.columns(2)
     with col_data_ini:
-        data_ini = st.date_input("Data inicial", value=datetime.now().replace(day=1).date(), key="data_ini_topo")
+        data_ini = st.date_input("Data inicial", value=datetime.now().date() - timedelta(days=6), key="data_ini_topo")
     with col_data_fim:
         data_fim = st.date_input("Data final", value=datetime.now().date(), key="data_fim_topo")
 
