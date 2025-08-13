@@ -526,6 +526,18 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
             
             print(f"✅ Resposta recebida: {len(messages)} mensagens")
             
+            # Debug: Verificar detalhes da resposta
+            if messages and len(messages) > 0:
+                print(f"🔍 DEBUG - Detalhes da resposta da API:")
+                print(f"   📅 Período consultado: {start_at} a {end_at}")
+                print(f"   📊 Total de mensagens retornadas: {len(messages)}")
+                print(f"   📅 Primeira mensagem - enviada_em: {messages[0].get('enviada_em', 'N/A')}")
+                print(f"   📅 Última mensagem - enviada_em: {messages[-1].get('enviada_em', 'N/A')}")
+                print(f"   🏢 Centro de custo da primeira: {messages[0].get('centro_custo', 'N/A')}")
+                print(f"   📋 Status da primeira: {messages[0].get('status', 'N/A')}")
+            else:
+                print(f"⚠️ DEBUG - Nenhuma mensagem retornada para o período: {start_at} a {end_at}")
+            
             # Filtrar por centro de custo se especificado
             if tenant_segment_id and messages:
                 messages_filtradas = []
@@ -565,9 +577,11 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
                             if centro_custo_msg in valores_aceitos:
                                 messages_filtradas.append(msg)
                 
+                print(f"🔍 DEBUG - Após filtro por centro de custo '{tenant_segment_id}': {len(messages_filtradas)} mensagens")
                 return messages_filtradas
             
             # Se não há filtro, retornar todas as mensagens
+            print(f"🔍 DEBUG - Sem filtro de centro de custo, retornando todas as {len(messages)} mensagens")
             return messages
     except requests.exceptions.Timeout:
         print("❌ Timeout na requisição")
@@ -817,6 +831,11 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     data_ini_dt = datetime.combine(data_ini, datetime.min.time())
     data_fim_dt = datetime.combine(data_fim, datetime.max.time())
     
+    print(f"🔍 DEBUG - Filtro por data:")
+    print(f"   📅 Data inicial: {data_ini} -> {data_ini_dt}")
+    print(f"   📅 Data final: {data_fim} -> {data_fim_dt}")
+    print(f"   📊 Mensagens antes do filtro: {len(messages)}")
+    
     mensagens_filtradas = []
     
     for msg in messages:
@@ -832,9 +851,12 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
                         # Se está no período, inclui a mensagem
                         if data_ini_dt <= data_criacao <= data_fim_dt:
                             mensagens_filtradas.append(msg)
+                        else:
+                            print(f"   ❌ Mensagem fora do período: {data_str} (criada em {data_criacao})")
                 except (ValueError, TypeError):
                     continue
     
+    print(f"   📊 Mensagens após filtro: {len(mensagens_filtradas)}")
     return mensagens_filtradas
 
 def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
@@ -1539,6 +1561,11 @@ def main():
     
     messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, centro_custo_valor)
     
+    # Filtrar mensagens por data após receber da API
+    if messages:
+        messages = filtrar_mensagens_por_data(messages, data_ini, data_fim)
+        print(f"📅 Após filtro por data: {len(messages)} mensagens")
+    
     print(f"📊 Resultado: {len(messages) if messages else 0} SMS, {total_acessos} acessos")
     
     # CALCULAR LEADS GERADOS ANTES DA RENDERIZAÇÃO DO HTML
@@ -2011,6 +2038,16 @@ def main():
     total_mensagens = len(messages) if messages else 0
     mensagens_entregues = len([msg for msg in messages if msg.get('status') == 'delivered']) if messages else 0
     investimento = total_mensagens * 0.08
+    
+    # Debug: Verificar dados recebidos
+    print(f"🔍 DEBUG - Dados Kolmeya recebidos:")
+    print(f"   📊 Total de mensagens: {total_mensagens}")
+    print(f"   ✅ Mensagens entregues: {mensagens_entregues}")
+    if messages and len(messages) > 0:
+        print(f"   📅 Primeira mensagem - enviada_em: {messages[0].get('enviada_em', 'N/A')}")
+        print(f"   📅 Última mensagem - enviada_em: {messages[-1].get('enviada_em', 'N/A')}")
+        print(f"   🏢 Centro de custo da primeira: {messages[0].get('centro_custo', 'N/A')}")
+    print(f"   💰 Investimento calculado: R$ {investimento:.2f}")
     
     # CAMPO 1: Taxa de 
     taxa_entrega = (mensagens_entregues / total_mensagens * 100) if total_mensagens > 0 else 0.0
