@@ -1448,6 +1448,9 @@ def main():
     if HAS_AUTOREFRESH:
         st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")
     
+    # Adicionar teste de ambiente na sidebar
+    test_environment_status()
+    
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
     # Campos de período
@@ -2685,6 +2688,80 @@ def main():
         else:
             total_leads_gerados = ura_count
         telefones_base = total_leads_gerados
+
+def test_environment_status():
+    """Função para testar e mostrar status do ambiente."""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔍 Status do Ambiente")
+    
+    # Verificar variáveis de ambiente
+    is_render = os.getenv('RENDER', False)
+    database_url = os.getenv('DATABASE_URL', 'Não definido')
+    
+    if is_render:
+        st.sidebar.success("🌐 **AMBIENTE: RENDER (Nuvem)**")
+        st.sidebar.info(f"📊 Banco: PostgreSQL")
+        st.sidebar.info(f"🔗 URL: {database_url[:30]}..." if len(database_url) > 30 else f"🔗 URL: {database_url}")
+    else:
+        st.sidebar.warning("🏠 **AMBIENTE: LOCAL**")
+        st.sidebar.info("📊 Banco: SQLite (dashboard.db)")
+    
+    # Testar banco de dados
+    if HAS_DATABASE:
+        try:
+            from database_manager import DashboardDatabase
+            db = DashboardDatabase()
+            
+            if db.db_type == 'postgresql':
+                st.sidebar.success("✅ Conectado ao PostgreSQL")
+            else:
+                st.sidebar.success("✅ Conectado ao SQLite")
+            
+            # Mostrar estatísticas
+            stats = db.obter_estatisticas_gerais()
+            if stats:
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("#### 📈 Estatísticas do Banco")
+                st.sidebar.metric("Métricas", stats.get('total_metricas', 0))
+                st.sidebar.metric("Consultas", stats.get('total_consultas', 0))
+                st.sidebar.metric("Tamanho", f"{stats.get('tamanho_banco_mb', 0)} MB")
+                
+                if stats.get('ultima_atualizacao'):
+                    st.sidebar.caption(f"Última atualização: {stats['ultima_atualizacao']}")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro no banco: {str(e)[:50]}...")
+    else:
+        st.sidebar.error("❌ Módulo de banco não encontrado")
+    
+    # Botão para teste manual
+    if st.sidebar.button("🧪 Teste Manual do Banco"):
+        try:
+            from database_manager import DashboardDatabase
+            db = DashboardDatabase()
+            
+            dados_teste = {
+                'canal': 'TESTE_DASHBOARD',
+                'sms_enviados': 100,
+                'interacoes': 10.5,
+                'investimento': 8.0,
+                'taxa_entrega': 95.0,
+                'total_vendas': 5,
+                'producao': 25000.0,
+                'leads_gerados': 20,
+                'ticket_medio': 5000.0,
+                'roi': 24992.0
+            }
+            
+            sucesso = db.salvar_metricas(dados_teste, "TESTE", datetime.now(), datetime.now())
+            
+            if sucesso:
+                st.sidebar.success("✅ Teste salvo com sucesso!")
+                st.sidebar.balloons()
+            else:
+                st.sidebar.error("❌ Erro no teste")
+                
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro: {str(e)[:50]}...")
 
 if __name__ == "__main__":
     main()
