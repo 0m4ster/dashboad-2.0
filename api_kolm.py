@@ -489,9 +489,16 @@ def testar_conexao_kolmeya():
         data_atual = datetime.now()
         data_7_dias_atras = data_atual - timedelta(days=7)
         
+        # Usar horário máximo permitido pela API (13:55)
+        max_allowed_time = data_atual.replace(hour=13, minute=55, second=0, microsecond=0)
+        if data_atual > max_allowed_time:
+            end_time = max_allowed_time
+        else:
+            end_time = data_atual
+        
         body = {
             "start_at": data_7_dias_atras.strftime('%Y-%m-%d 00:00'),
-            "end_at": data_atual.strftime('%Y-%m-%d %H:%M'),
+            "end_at": end_time.strftime('%Y-%m-%d %H:%M'),
             "limit": 100  # Limitar para teste
         }
         
@@ -524,23 +531,22 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     # Formatar datas para o formato esperado pela API
     start_at = data_ini.strftime('%Y-%m-%d 00:00')
     
-    # Se a data final for hoje, usar o horário atual para pegar dados em tempo real
+    # Se a data final for hoje, usar horário máximo permitido pela API (13:55)
     if data_fim == datetime.now().date():
-        end_at = datetime.now().strftime('%Y-%m-%d %H:%M')
-        print(f"🔍 DEBUG - Data final é hoje, usando horário atual: {end_at}")
+        # A API tem limitação de horário - máximo 13:55 do dia atual
+        current_time = datetime.now()
+        max_allowed_time = current_time.replace(hour=13, minute=55, second=0, microsecond=0)
+        
+        # Se o horário atual é posterior a 13:55, usar 13:55
+        if current_time > max_allowed_time:
+            end_at = max_allowed_time.strftime('%Y-%m-%d %H:%M')
+            print(f"🔍 DEBUG - Data final é hoje, usando horário máximo permitido (13:55): {end_at}")
+        else:
+            end_at = current_time.strftime('%Y-%m-%d %H:%M')
+            print(f"🔍 DEBUG - Data final é hoje, usando horário atual: {end_at}")
     else:
         end_at = data_fim.strftime('%Y-%m-%d 23:59')
         print(f"🔍 DEBUG - Data final não é hoje, usando 23:59: {end_at}")
-    
-    # Verificar se o período é válido (não pode ser futuro)
-    current_time = datetime.now()
-    start_dt = datetime.strptime(start_at, '%Y-%m-%d %H:%M')
-    end_dt = datetime.strptime(end_at, '%Y-%m-%d %H:%M')
-    
-    if end_dt > current_time:
-        print(f"⚠️ DEBUG - Período final é futuro, ajustando para horário atual")
-        end_at = current_time.strftime('%Y-%m-%d %H:%M')
-        print(f"🔍 DEBUG - Novo end_at: {end_at}")
     
     print(f"🔍 DEBUG - Período final para consulta: {start_at} a {end_at}")
     
@@ -638,6 +644,7 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
         else:
             print(f"❌ DEBUG - Erro na API: Status {resp.status_code}")
             print(f"🔍 DEBUG - Resposta de erro: {resp.text}")
+            return []
             
             # Filtrar por centro de custo se especificado
             if tenant_segment_id and messages:
@@ -1613,6 +1620,15 @@ def main():
     
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
+    # Informação sobre limitação da API
+    if st.checkbox("ℹ️ Mostrar informações sobre limitações da API"):
+        st.info("""
+        **Limitações da API Kolmeya:**
+        - Período máximo de consulta: 7 dias
+        - Para o dia atual: dados disponíveis até 13:55
+        - Token de teste usado para demonstração
+        """)
+
     # Campos de período
     col_data_ini, col_data_fim = st.columns(2)
     with col_data_ini:
@@ -2473,10 +2489,14 @@ def main():
             print(f"   AD: SMS={dados_ad['sms_enviados']}, Vendas={dados_ad['total_vendas']}, Produção={dados_ad['producao']}")
             
             # Salvar no banco de dados
-            salvar_metricas_dashboard(
-                dados_kolmeya, dados_4net, dados_whatsapp, dados_ad,
-                centro_custo_selecionado, data_ini, data_fim
-            )
+            try:
+                salvar_metricas_dashboard(
+                    dados_kolmeya, dados_4net, dados_whatsapp, dados_ad,
+                    centro_custo_selecionado, data_ini, data_fim
+                )
+            except Exception as e:
+                print(f"⚠️ Erro ao salvar métricas: {e}")
+                # Continuar mesmo com erro no banco
             
             print(f"✅ Métricas salvas com sucesso - {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
             
