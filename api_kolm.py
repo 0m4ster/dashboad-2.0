@@ -65,21 +65,27 @@ def get_kolmeya_token():
 # Função para obter o token da API da Facta
 def get_facta_token():
     """Retorna o token da API da Facta."""
+    print(f"🔍 Buscando token da Facta...")
+    
     # Primeiro tenta variável de ambiente
     token = os.environ.get("FACTA_TOKEN", "")
+    if token:
+        print(f"✅ Token da Facta encontrado na variável de ambiente: {token[:10]}...")
+        return token
     
     # Se não encontrar, tenta ler do arquivo
-    if not token:
-        try:
-            with open("facta_token.txt", "r") as f:
-                token = f.read().strip()
-                print("✅ Token da Facta lido do arquivo")
-        except FileNotFoundError:
-            print("❌ Arquivo facta_token.txt não encontrado")
-        except Exception as e:
-            print(f"❌ Erro ao ler token da Facta: {e}")
+    try:
+        with open("facta_token.txt", "r") as f:
+            token = f.read().strip()
+            print(f"✅ Token da Facta lido do arquivo: {token[:10]}...")
+            return token
+    except FileNotFoundError:
+        print("❌ Arquivo facta_token.txt não encontrado")
+    except Exception as e:
+        print(f"❌ Erro ao ler token da Facta: {e}")
     
-    return token
+    print("❌ Nenhum token da Facta encontrado")
+    return ""
 
 # Configurações
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -676,6 +682,10 @@ def ler_base(uploaded_file):
 
 def extrair_ura_da_base(df, data_ini=None, data_fim=None):
     """Extrai e conta registros com UTM source = 'URA' da base carregada, separados por status e opcionalmente filtrados por data."""
+    print(f"🔍 DEBUG - Iniciando extração URA da base...")
+    print(f"   📊 Tamanho da base: {len(df) if df is not None else 0} registros")
+    print(f"   📅 Período: {data_ini} a {data_fim}")
+    
     ura_count = 0
     ura_por_status = {
         'Novo': 0,
@@ -882,6 +892,10 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                     if cpf_encontrado:
                         ura_cpfs_por_status['Outros'].add(cpf_encontrado)
     
+    print(f"🔍 DEBUG - Extração URA concluída:")
+    print(f"   📊 Total URA: {ura_count}")
+    print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
+    
     return ura_count, ura_por_status, ura_cpfs_por_status
 
 def filtrar_mensagens_por_data(messages, data_ini, data_fim):
@@ -940,8 +954,10 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         token = get_facta_token()
     
     if not token:
-        print("Token da Facta não encontrado")
+        print("❌ Token da Facta não encontrado")
         return None
+    
+    print(f"🔍 Consultando Facta para CPF: {cpf}")
     
     # URL da API da Facta (produção)
     url = "https://webservice.facta.com.br/proposta/andamento-propostas"
@@ -1797,6 +1813,9 @@ def main():
                     cpfs_para_consulta.update(cpfs_status)
             
             if cpfs_para_consulta:
+                print(f"🔍 DEBUG - CPFs para consulta Facta (URA): {len(cpfs_para_consulta)}")
+                print(f"   📋 Primeiros 5 CPFs: {list(cpfs_para_consulta)[:5]}")
+                
                 # Consultar Facta para os CPFs encontrados
                 try:
                     propostas_facta = consultar_facta_multiplos_cpfs(
@@ -3011,6 +3030,19 @@ def test_environment_status():
         facta_cache.clear()
         st.sidebar.success("✅ Cache da Facta limpo!")
         st.sidebar.info(f"Cache tinha {len(facta_cache)} entradas")
+    
+    # Botão para teste da Facta
+    if st.sidebar.button("🔍 Teste Facta"):
+        try:
+            # Teste com um CPF específico
+            cpf_teste = "12345678901"  # CPF de teste
+            propostas = consultar_facta_por_cpf(cpf_teste)
+            if propostas is not None:
+                st.sidebar.success(f"✅ API Facta funcionando - {len(propostas)} propostas")
+            else:
+                st.sidebar.warning("⚠️ API Facta retornou None")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro na API Facta: {str(e)[:50]}...")
 
 if __name__ == "__main__":
     main()
