@@ -34,15 +34,33 @@ KOLMEYA_TOKEN_DIRETO = ""  # Coloque seu token aqui para testes
 # Função para obter o token da API
 def get_kolmeya_token():
     """Retorna o token da API do Kolmeya."""
+    print(f"🔍 Buscando token do Kolmeya...")
+    
     # Primeiro tenta variável de ambiente
     token = os.environ.get("KOLMEYA_TOKEN", "")
+    if token:
+        print(f"✅ Token encontrado na variável de ambiente: {token[:10]}...")
+        return token
     
     # Se não encontrar, tenta configuração direta
-    if not token and KOLMEYA_TOKEN_DIRETO:
+    if KOLMEYA_TOKEN_DIRETO:
         token = KOLMEYA_TOKEN_DIRETO
-        print("⚠️ Usando token configurado diretamente no código (não recomendado para produção)")
+        print(f"⚠️ Usando token configurado diretamente no código: {token[:10]}...")
+        return token
     
-    return token
+    # Se não encontrar, tenta ler do arquivo
+    try:
+        with open("kolmeya_token.txt", "r") as f:
+            token = f.read().strip()
+            print(f"✅ Token lido do arquivo kolmeya_token.txt: {token[:10]}...")
+            return token
+    except FileNotFoundError:
+        print("❌ Arquivo kolmeya_token.txt não encontrado")
+    except Exception as e:
+        print(f"❌ Erro ao ler token do arquivo: {e}")
+    
+    print("❌ Nenhum token do Kolmeya encontrado")
+    return ""
 
 # Função para obter o token da API da Facta
 def get_facta_token():
@@ -65,6 +83,9 @@ def get_facta_token():
 
 # Configurações
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
+
+# Cache para consultas da Facta (evita consultas repetidas na mesma sessão)
+facta_cache = {}
 
 # Constantes para os centros de custo do Kolmeya
 TENANT_SEGMENT_ID_FGTS = "FGTS"  # FGTS conforme registro
@@ -435,16 +456,48 @@ def obter_saldo_kolmeya(token=None):
             "Accept": "application/json"
         }
         
+        print(f"🔍 Consultando saldo Kolmeya:")
+        print(f"   🌐 URL: {url}")
+        print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Não fornecido")
+        
         resp = requests.get(url, headers=headers, timeout=30)
+        
+        print(f"   📊 Status Code: {resp.status_code}")
         
         if resp.status_code == 200:
             data = resp.json()
-            saldo = data.get("balance", 0.0)
-            return float(saldo)
+            print(f"   📄 Resposta: {data}")
+            
+            # Tentar diferentes campos possíveis para o saldo
+            saldo = None
+            if 'balance' in data:
+                saldo = data.get("balance")
+            elif 'saldo' in data:
+                saldo = data.get("saldo")
+            elif 'amount' in data:
+                saldo = data.get("amount")
+            elif 'value' in data:
+                saldo = data.get("value")
+            else:
+                print(f"   ⚠️ Campo de saldo não encontrado. Campos disponíveis: {list(data.keys())}")
+                saldo = 0.0
+            
+            saldo_float = float(saldo) if saldo is not None else 0.0
+            print(f"   💰 Saldo encontrado: R$ {saldo_float:,.2f}")
+            return saldo_float
         else:
+            print(f"   ❌ Erro HTTP {resp.status_code}")
+            print(f"   📄 Resposta de erro: {resp.text}")
             return 0.0
             
+    except requests.exceptions.Timeout:
+        print("   ❌ Timeout na requisição de saldo")
+        return 0.0
+    except requests.exceptions.RequestException as e:
+        print(f"   ❌ Erro na requisição de saldo: {e}")
+        return 0.0
     except Exception as e:
+        print(f"   ❌ Erro inesperado ao consultar saldo: {e}")
         return 0.0
 
 def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
@@ -914,55 +967,96 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         params["data_fim"] = data_fim.strftime('%d/%m/%Y')
     
     try:
-        print(f"Consultando Facta para CPF: {cpf}")
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp = requests.get(url, headers=headers, params=params, timeout=15)  # Reduzido timeout
         
         if resp.status_code == 200:
             data = resp.json()
             if not data.get("erro", True):
                 propostas = data.get("propostas", [])
-                print(f"Encontradas {len(propostas)} propostas para CPF {cpf}")
                 return propostas
             else:
-                print(f"Erro na resposta da Facta para CPF {cpf}: {data.get('mensagem', 'Erro desconhecido')}")
                 return []
         else:
-            print(f"Erro HTTP {resp.status_code} ao consultar Facta para CPF {cpf}")
             return []
             
     except Exception as e:
-        print(f"Erro ao consultar Facta para CPF {cpf}: {e}")
         return []
 
-def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
-    """Consulta o endpoint da Facta para múltiplos CPFs usando threads."""
+def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=3, data_ini=None, data_fim=None):
+    """Consulta o endpoint da Facta para múltiplos CPFs usando threads otimizadas."""
+    global facta_cache
+    
     if not cpfs:
         return {}
     
+    # Limitar o número de CPFs para evitar sobrecarga
+    cpfs_limitados = list(cpfs)[:50]  # Máximo 50 CPFs por consulta
+    
+    if len(cpfs) > 50:
+        print(f"⚠️ Limitando consulta a 50 CPFs (de {len(cpfs)} total)")
+    
+    # Verificar cache primeiro
+    cpfs_para_consultar = []
     resultados = {}
     
-    def consultar_cpf(cpf):
-        try:
-            propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
-            return cpf, propostas
-        except Exception as e:
-            print(f"Erro ao consultar CPF {cpf}: {e}")
-            return cpf, []
-    
-    # Usar ThreadPoolExecutor para consultas paralelas
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submeter todas as consultas
-        future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in cpfs}
+    for cpf in cpfs_limitados:
+        # Criar chave única para o cache
+        chave_cache = f"{cpf}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf
         
-        # Coletar resultados
-        for future in as_completed(future_to_cpf):
-            cpf = future_to_cpf[future]
+        if chave_cache in facta_cache:
+            resultados[cpf] = facta_cache[chave_cache]
+        else:
+            cpfs_para_consultar.append(cpf)
+    
+    if cpfs_para_consultar:
+        print(f"🚀 Consultando {len(cpfs_para_consultar)} CPFs (cache: {len(cpfs_limitados) - len(cpfs_para_consultar)})")
+        inicio = time.time()
+        
+        cpfs_processados = 0
+        
+        def consultar_cpf(cpf):
             try:
-                cpf_result, propostas = future.result()
-                resultados[cpf_result] = propostas
+                propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
+                return cpf, propostas
             except Exception as e:
-                print(f"Erro ao processar resultado para CPF {cpf}: {e}")
-                resultados[cpf] = []
+                return cpf, []
+        
+        # Usar ThreadPoolExecutor com menos workers para evitar sobrecarga
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submeter consultas em lotes menores
+            future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in cpfs_para_consultar}
+            
+            # Coletar resultados com progresso
+            for future in as_completed(future_to_cpf):
+                cpf = future_to_cpf[future]
+                try:
+                    cpf_result, propostas = future.result()
+                    resultados[cpf_result] = propostas
+                    
+                    # Salvar no cache
+                    chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
+                    facta_cache[chave_cache] = propostas
+                    
+                    cpfs_processados += 1
+                    
+                    # Mostrar progresso a cada 10 CPFs
+                    if cpfs_processados % 10 == 0:
+                        tempo_decorrido = time.time() - inicio
+                        print(f"📊 Progresso: {cpfs_processados}/{len(cpfs_para_consultar)} CPFs processados ({tempo_decorrido:.1f}s)")
+                        
+                except Exception as e:
+                    resultados[cpf] = []
+                    cpfs_processados += 1
+        
+        tempo_total = time.time() - inicio
+        cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
+        
+        print(f"✅ Consulta Facta concluída em {tempo_total:.1f}s:")
+        print(f"   📊 CPFs processados: {cpfs_processados}")
+        print(f"   ✅ CPFs com propostas: {cpfs_com_resultado}")
+        print(f"   ❌ CPFs sem propostas: {cpfs_processados - cpfs_com_resultado}")
+    else:
+        print(f"✅ Usando cache para todos os {len(cpfs_limitados)} CPFs")
     
     return resultados
 
@@ -2899,6 +2993,24 @@ def test_environment_status():
                 
         except Exception as e:
             st.sidebar.error(f"❌ Erro: {str(e)[:50]}...")
+    
+    # Botão para teste do saldo Kolmeya
+    if st.sidebar.button("💰 Teste Saldo Kolmeya"):
+        try:
+            saldo = obter_saldo_kolmeya()
+            if saldo > 0:
+                st.sidebar.success(f"✅ Saldo: {formatar_real(saldo)}")
+            else:
+                st.sidebar.warning("⚠️ Saldo zero ou erro na consulta")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro: {str(e)[:50]}...")
+    
+    # Botão para limpar cache da Facta
+    if st.sidebar.button("🗑️ Limpar Cache Facta"):
+        global facta_cache
+        facta_cache.clear()
+        st.sidebar.success("✅ Cache da Facta limpo!")
+        st.sidebar.info(f"Cache tinha {len(facta_cache)} entradas")
 
 if __name__ == "__main__":
     main()
