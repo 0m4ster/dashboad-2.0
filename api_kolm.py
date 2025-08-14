@@ -991,7 +991,7 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         params["data_fim"] = data_fim.strftime('%d/%m/%Y')
     
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=15)  # Reduzido timeout
+        resp = requests.get(url, headers=headers, params=params, timeout=10)  # Timeout ainda mais reduzido
         
         if resp.status_code == 200:
             data = resp.json()
@@ -1006,35 +1006,92 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
     except Exception as e:
         return []
 
-def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
-    """Consulta o endpoint da Facta para múltiplos CPFs usando threads."""
+# Cache global para consultas da Facta (evita consultas repetidas na mesma sessão)
+facta_cache = {}
+
+def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=None, data_fim=None):
+    """Consulta o endpoint da Facta para múltiplos CPFs usando threads otimizadas."""
+    global facta_cache
+    
     if not cpfs:
         return {}
     
+    # Limitar o número de CPFs para evitar sobrecarga
+    cpfs_limitados = list(cpfs)[:100]  # Máximo 100 CPFs por consulta
+    
+    if len(cpfs) > 100:
+        print(f"⚠️ Limitando consulta a 100 CPFs (de {len(cpfs)} total)")
+    
+    print(f"🚀 Iniciando consulta Facta para {len(cpfs_limitados)} CPFs...")
+    inicio = time.time()
+    
+    # Verificar cache primeiro
+    cpfs_para_consultar = []
     resultados = {}
     
-    def consultar_cpf(cpf):
-        try:
-            propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
-            return cpf, propostas
-        except Exception as e:
-            print(f"Erro ao consultar CPF {cpf}: {e}")
-            return cpf, []
-    
-    # Usar ThreadPoolExecutor para consultas paralelas
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submeter todas as consultas
-        future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in cpfs}
+    for cpf in cpfs_limitados:
+        # Criar chave única para o cache
+        chave_cache = f"{cpf}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf
         
-        # Coletar resultados
-        for future in as_completed(future_to_cpf):
-            cpf = future_to_cpf[future]
+        if chave_cache in facta_cache:
+            resultados[cpf] = facta_cache[chave_cache]
+        else:
+            cpfs_para_consultar.append(cpf)
+    
+    if cpfs_para_consultar:
+        print(f"🔍 Consultando {len(cpfs_para_consultar)} CPFs (cache: {len(cpfs_limitados) - len(cpfs_para_consultar)})")
+        
+        # Dividir em lotes menores para processamento paralelo
+        tamanho_lote = 20
+        lotes = [cpfs_para_consultar[i:i + tamanho_lote] for i in range(0, len(cpfs_para_consultar), tamanho_lote)]
+        
+        cpfs_processados = 0
+        
+        def consultar_cpf(cpf):
             try:
-                cpf_result, propostas = future.result()
-                resultados[cpf_result] = propostas
+                propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
+                return cpf, propostas
             except Exception as e:
-                print(f"Erro ao processar resultado para CPF {cpf}: {e}")
-                resultados[cpf] = []
+                return cpf, []
+        
+        # Processar lotes em paralelo
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for lote in lotes:
+                # Submeter lote atual
+                future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in lote}
+                
+                # Coletar resultados do lote
+                for future in as_completed(future_to_cpf):
+                    cpf = future_to_cpf[future]
+                    try:
+                        cpf_result, propostas = future.result()
+                        resultados[cpf_result] = propostas
+                        
+                        # Salvar no cache
+                        chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
+                        facta_cache[chave_cache] = propostas
+                        
+                        cpfs_processados += 1
+                        
+                        # Mostrar progresso a cada 10 CPFs
+                        if cpfs_processados % 10 == 0:
+                            tempo_decorrido = time.time() - inicio
+                            print(f"📊 Progresso: {cpfs_processados}/{len(cpfs_para_consultar)} CPFs processados ({tempo_decorrido:.1f}s)")
+                            
+                    except Exception as e:
+                        resultados[cpf] = []
+                        cpfs_processados += 1
+    else:
+        print(f"✅ Usando cache para todos os {len(cpfs_limitados)} CPFs")
+    
+    tempo_total = time.time() - inicio
+    cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
+    
+    print(f"✅ Consulta Facta concluída em {tempo_total:.1f}s:")
+    print(f"   📊 CPFs processados: {len(cpfs_limitados)}")
+    print(f"   ✅ CPFs com propostas: {cpfs_com_resultado}")
+    print(f"   ❌ CPFs sem propostas: {len(cpfs_limitados) - cpfs_com_resultado}")
+    print(f"   💾 Cache atual: {len(facta_cache)} entradas")
     
     return resultados
 
@@ -3001,6 +3058,27 @@ def test_environment_status():
                 st.sidebar.warning("⚠️ Saldo zero ou erro na consulta")
         except Exception as e:
             st.sidebar.error(f"❌ Erro: {str(e)[:50]}...")
+    
+    # Botão para teste da Facta
+    if st.sidebar.button("🔍 Teste Facta"):
+        try:
+            # Teste com um CPF específico
+            cpf_teste = "12345678901"  # CPF de teste
+            propostas = consultar_facta_por_cpf(cpf_teste)
+            if propostas is not None:
+                st.sidebar.success(f"✅ API Facta funcionando - {len(propostas)} propostas")
+            else:
+                st.sidebar.warning("⚠️ API Facta retornou None")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro na API Facta: {str(e)[:50]}...")
+    
+    # Botão para limpar cache da Facta
+    if st.sidebar.button("🗑️ Limpar Cache Facta"):
+        global facta_cache
+        cache_size = len(facta_cache)
+        facta_cache.clear()
+        st.sidebar.success("✅ Cache da Facta limpo!")
+        st.sidebar.info(f"Cache tinha {cache_size} entradas")
 
 if __name__ == "__main__":
     main()
