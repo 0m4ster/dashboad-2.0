@@ -65,26 +65,21 @@ def get_kolmeya_token():
 # Função para obter o token da API da Facta
 def get_facta_token():
     """Retorna o token da API da Facta."""
-    print(f"🔍 Buscando token da Facta...")
-    
     # Primeiro tenta variável de ambiente
     token = os.environ.get("FACTA_TOKEN", "")
     if token:
-        print(f"✅ Token da Facta encontrado na variável de ambiente: {token[:10]}...")
         return token
     
     # Se não encontrar, tenta ler do arquivo
     try:
         with open("facta_token.txt", "r") as f:
             token = f.read().strip()
-            print(f"✅ Token da Facta lido do arquivo: {token[:10]}...")
             return token
     except FileNotFoundError:
-        print("❌ Arquivo facta_token.txt não encontrado")
+        pass
     except Exception as e:
-        print(f"❌ Erro ao ler token da Facta: {e}")
+        pass
     
-    print("❌ Nenhum token da Facta encontrado")
     return ""
 
 # Configurações
@@ -970,7 +965,6 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         token = get_facta_token()
     
     if not token:
-        print(f"❌ Token da Facta não encontrado para CPF {cpf}")
         return None
     
     # URL da API da Facta (produção)
@@ -997,124 +991,56 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         params["data_fim"] = data_fim.strftime('%d/%m/%Y')
     
     try:
-        print(f"🔍 Consultando Facta para CPF: {cpf}")
-        print(f"   🌐 URL: {url}")
-        print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Não fornecido")
-        print(f"   📋 Parâmetros: {params}")
-        
-        resp = requests.get(url, headers=headers, params=params, timeout=15)  # Aumentado timeout
-        
-        print(f"   📊 Status Code: {resp.status_code}")
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
         
         if resp.status_code == 200:
             data = resp.json()
-            print(f"   📄 Resposta: {data}")
-            
             if not data.get("erro", True):
                 propostas = data.get("propostas", [])
-                print(f"   ✅ Encontradas {len(propostas)} propostas para CPF {cpf}")
                 return propostas
             else:
-                print(f"   ❌ Erro na resposta da Facta para CPF {cpf}: {data.get('mensagem', 'Erro desconhecido')}")
                 return []
         else:
-            print(f"   ❌ Erro HTTP {resp.status_code} ao consultar Facta para CPF {cpf}")
-            print(f"   📄 Resposta de erro: {resp.text}")
             return []
             
     except Exception as e:
-        print(f"   ❌ Erro ao consultar Facta para CPF {cpf}: {e}")
         return []
 
-# Cache global para consultas da Facta (evita consultas repetidas na mesma sessão)
-facta_cache = {}
 
-def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=None, data_fim=None):
-    """Consulta o endpoint da Facta para múltiplos CPFs usando threads otimizadas."""
-    global facta_cache
-    
-    print(f"🔍 DEBUG - consultar_facta_multiplos_cpfs chamada")
-    print(f"   📊 CPFs recebidos: {len(cpfs) if cpfs else 0}")
-    print(f"   🔑 Token fornecido: {'Sim' if token else 'Não'}")
-    print(f"   📅 Período: {data_ini} a {data_fim}")
-    
+
+def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
+    """Consulta o endpoint da Facta para múltiplos CPFs usando threads."""
     if not cpfs:
-        print(f"   ⚠️ Lista de CPFs vazia")
         return {}
     
-    # Limitar o número de CPFs para evitar sobrecarga
-    cpfs_limitados = list(cpfs)[:50]  # Reduzido para 50 CPFs por consulta
-    
-    if len(cpfs) > 50:
-        print(f"⚠️ Limitando consulta a 50 CPFs (de {len(cpfs)} total)")
-    
-    print(f"🚀 Iniciando consulta Facta para {len(cpfs_limitados)} CPFs...")
-    inicio = time.time()
-    
-    # Verificar cache primeiro
-    cpfs_para_consultar = []
     resultados = {}
     
-    for cpf in cpfs_limitados:
-        # Criar chave única para o cache
-        chave_cache = f"{cpf}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf
-        
-        if chave_cache in facta_cache:
-            resultados[cpf] = facta_cache[chave_cache]
-        else:
-            cpfs_para_consultar.append(cpf)
+    def consultar_cpf(cpf):
+        try:
+            propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
+            return cpf, propostas
+        except Exception as e:
+            return cpf, []
     
-    print(f"🔍 CPFs para consultar: {len(cpfs_para_consultar)} (cache: {len(cpfs_limitados) - len(cpfs_para_consultar)})")
-    
-    if cpfs_para_consultar:
-        # Simplificar: consultar apenas os primeiros 5 CPFs para teste
-        cpfs_teste = cpfs_para_consultar[:5]
-        print(f"🧪 Testando com primeiros 5 CPFs: {cpfs_teste}")
+    # Usar ThreadPoolExecutor para consultas paralelas
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submeter todas as consultas
+        future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in cpfs}
         
-        cpfs_processados = 0
-        
-        def consultar_cpf(cpf):
+        # Coletar resultados
+        for future in as_completed(future_to_cpf):
+            cpf = future_to_cpf[future]
             try:
-                print(f"🔍 Consultando CPF: {cpf}")
-                propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
-                print(f"✅ CPF {cpf}: {len(propostas) if propostas else 0} propostas")
-                return cpf, propostas
+                cpf_result, propostas = future.result()
+                resultados[cpf_result] = propostas
             except Exception as e:
-                print(f"❌ Erro no CPF {cpf}: {e}")
-                return cpf, []
-        
-        # Processar CPFs de teste
-        for cpf in cpfs_teste:
-            cpf_result, propostas = consultar_cpf(cpf)
-            resultados[cpf_result] = propostas
-            
-            # Salvar no cache
-            chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
-            facta_cache[chave_cache] = propostas
-            
-            cpfs_processados += 1
-    else:
-        print(f"✅ Usando cache para todos os {len(cpfs_limitados)} CPFs")
-    
-    tempo_total = time.time() - inicio
-    cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
-    
-    print(f"✅ Consulta Facta concluída em {tempo_total:.1f}s:")
-    print(f"   📊 CPFs processados: {len(resultados)}")
-    print(f"   ✅ CPFs com propostas: {cpfs_com_resultado}")
-    print(f"   ❌ CPFs sem propostas: {len(resultados) - cpfs_com_resultado}")
-    print(f"   💾 Cache atual: {len(facta_cache)} entradas")
+                resultados[cpf] = []
     
     return resultados
 
 def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
     """Analisa as propostas da Facta e retorna estatísticas."""
-    print(f"🔍 DEBUG - Iniciando análise de propostas Facta...")
-    print(f"   📊 Total de CPFs: {len(propostas_dict)}")
-    print(f"   🎯 Filtro de status: {filtro_status}")
-    
     if not propostas_dict:
-        print(f"   ⚠️ Dicionário de propostas vazio")
         return {
             'total_cpfs_consultados': 0,
             'total_propostas': 0,
@@ -1166,9 +1092,6 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
             # Verificar se deve incluir a proposta
             if status_validos is None or status in status_validos:
                 propostas_validas.append(proposta)
-                print(f"   ✅ Proposta incluída - CPF: {cpf}, Status: {status}, Valor: {proposta.get('valor_af', 0)}")
-            else:
-                print(f"   ❌ Proposta excluída - CPF: {cpf}, Status: {status}")
         
         if propostas_validas:
             cpfs_com_propostas += 1
@@ -1201,14 +1124,7 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
         else:
             cpfs_sem_propostas += 1
     
-    print(f"🔍 DEBUG - Análise Facta (status válidos incluindo CANCELADO):")
-    print(f"   📊 Total CPFs consultados: {total_cpfs}")
-    print(f"   ✅ CPFs com propostas válidas: {cpfs_com_propostas}")
-    print(f"   ❌ CPFs sem propostas válidas: {cpfs_sem_propostas}")
-    print(f"   💰 Total de propostas válidas: {total_propostas}")
-    print(f"   💰 Valor total (valor_af): R$ {valor_total:,.2f}")
-    print(f"   📋 Campo usado: 'valor_af' (não 'valor_bruto')")
-    print(f"   📋 Status incluídos: CONTRATO PAGO, CANCELADO, ASSINADO, APROVADA, etc.")
+
     
     return {
         'total_cpfs_consultados': total_cpfs,
@@ -1994,46 +1910,29 @@ def main():
     if uploaded_file is not None:
         try:
             df_base = ler_base(uploaded_file)
-            print(f"📊 Base carregada com sucesso: {len(df_base)} registros")
             
             # Extrair contagem de URA da base com filtro de data e separação por status
-            print(f"🔍 DEBUG - Iniciando extração URA da base...")
             ura_count, ura_por_status, ura_cpfs_por_status = extrair_ura_da_base(df_base, data_ini, data_fim)
-            print(f"🔍 DEBUG - Extração URA concluída:")
-            print(f"   📊 Total URA: {ura_count}")
-            print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
             
             # CONSULTA AUTOMÁTICA NA FACTA
             # Obter CPFs para consulta na Facta baseado no centro de custo selecionado
             # Extrair CPFs da base para consulta na Facta
-            print(f"🔍 DEBUG - Extraindo CPFs para consulta Facta...")
-            print(f"   🏢 Centro de custo selecionado: {centro_custo_selecionado}")
-            print(f"   📊 CPFs URA por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
-            
             cpfs_para_consulta = set()
             
             if centro_custo_selecionado == "Novo":
                 cpfs_para_consulta = ura_cpfs_por_status.get('Novo', set())
-                print(f"   🎯 Selecionando CPFs 'Novo': {len(cpfs_para_consulta)}")
             elif centro_custo_selecionado == "FGTS":
                 cpfs_para_consulta = ura_cpfs_por_status.get('FGTS', set())
-                print(f"   🎯 Selecionando CPFs 'FGTS': {len(cpfs_para_consulta)}")
             elif centro_custo_selecionado == "Crédito CLT":
                 cpfs_para_consulta = ura_cpfs_por_status.get('CLT', set())
-                print(f"   🎯 Selecionando CPFs 'CLT': {len(cpfs_para_consulta)}")
             else:
                 # Se "TODOS", usar todos os CPFs
                 for cpfs_status in ura_cpfs_por_status.values():
                     cpfs_para_consulta.update(cpfs_status)
-                print(f"   🎯 Selecionando TODOS os CPFs: {len(cpfs_para_consulta)}")
             
             if cpfs_para_consulta:
-                print(f"🔍 CPFs para consulta Facta (URA): {len(cpfs_para_consulta)}")
-                print(f"   📋 Primeiros 5 CPFs: {list(cpfs_para_consulta)[:5]}")
-                
                 # Consultar Facta para os CPFs encontrados
                 try:
-                    print(f"🚀 Iniciando consulta Facta para URA...")
                     propostas_facta = consultar_facta_multiplos_cpfs(
                         list(cpfs_para_consulta), 
                         token=None, 
@@ -2042,8 +1941,6 @@ def main():
                         data_fim=data_fim
                     )
                     
-                    print(f"📊 Resultados Facta URA: {len(propostas_facta)} CPFs com propostas")
-                    
                     # Analisar resultados da Facta
                     if propostas_facta:
                         analise_facta = analisar_propostas_facta(propostas_facta, status_facta_valor)
@@ -2051,20 +1948,14 @@ def main():
                         # Atualizar métricas com dados da Facta (URA)
                         st.session_state["producao_facta_ura"] = analise_facta['valor_total_propostas']
                         st.session_state["total_vendas_facta_ura"] = analise_facta['total_propostas']
-                        
-                        print(f"💰 Produção Facta URA: R$ {analise_facta['valor_total_propostas']:,.2f}")
-                        print(f"📈 Total vendas Facta URA: {analise_facta['total_propostas']}")
                     else:
                         st.session_state["producao_facta_ura"] = 0.0
                         st.session_state["total_vendas_facta_ura"] = 0
-                        print(f"⚠️ Nenhuma proposta encontrada na Facta para URA")
                         
                 except Exception as e:
-                    print(f"❌ Erro na consulta Facta URA: {e}")
                     st.session_state["producao_facta_ura"] = 0.0
                     st.session_state["total_vendas_facta_ura"] = 0
             else:
-                print(f"⚠️ Nenhum CPF encontrado para consulta Facta URA")
                 st.session_state["producao_facta_ura"] = 0.0
                 st.session_state["total_vendas_facta_ura"] = 0
             
@@ -3302,44 +3193,7 @@ def test_environment_status():
         except Exception as e:
             st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
     
-    # Botão para limpar cache da Facta
-    if st.sidebar.button("🗑️ Limpar Cache Facta"):
-        global facta_cache
-        cache_size = len(facta_cache)
-        facta_cache.clear()
-        st.sidebar.success("✅ Cache da Facta limpo!")
-        st.sidebar.info(f"Cache tinha {cache_size} entradas")
-    
-    # Botão para forçar consulta Facta
-    if st.sidebar.button("🚀 Forçar Consulta Facta"):
-        try:
-            # Teste com CPFs de exemplo
-            cpfs_teste = ["12345678901", "98765432100", "11122233344"]
-            st.sidebar.info(f"Testando com {len(cpfs_teste)} CPFs de exemplo")
-            
-            # Verificar token
-            token = get_facta_token()
-            if not token:
-                st.sidebar.error("❌ Token da Facta não encontrado")
-            else:
-                st.sidebar.success(f"✅ Token encontrado: {token[:10]}...")
-                
-                # Testar consulta
-                resultados = consultar_facta_multiplos_cpfs(
-                    cpfs_teste, 
-                    token=token, 
-                    max_workers=2, 
-                    data_ini=datetime.now().date() - timedelta(days=30), 
-                    data_fim=datetime.now().date()
-                )
-                
-                if resultados:
-                    cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
-                    st.sidebar.success(f"✅ Consulta funcionando - {cpfs_com_resultado} CPFs com propostas")
-                else:
-                    st.sidebar.warning("⚠️ Consulta retornou vazio")
-        except Exception as e:
-            st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
+
 
 if __name__ == "__main__":
     try:
