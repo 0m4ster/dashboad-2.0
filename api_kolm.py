@@ -65,21 +65,27 @@ def get_kolmeya_token():
 # Função para obter o token da API da Facta
 def get_facta_token():
     """Retorna o token da API da Facta."""
+    print(f"🔍 Buscando token da Facta...")
+    
     # Primeiro tenta variável de ambiente
     token = os.environ.get("FACTA_TOKEN", "")
+    if token:
+        print(f"✅ Token da Facta encontrado na variável de ambiente: {token[:10]}...")
+        return token
     
     # Se não encontrar, tenta ler do arquivo
-    if not token:
-        try:
-            with open("facta_token.txt", "r") as f:
-                token = f.read().strip()
-                print("✅ Token da Facta lido do arquivo")
-        except FileNotFoundError:
-            print("❌ Arquivo facta_token.txt não encontrado")
-        except Exception as e:
-            print(f"❌ Erro ao ler token da Facta: {e}")
+    try:
+        with open("facta_token.txt", "r") as f:
+            token = f.read().strip()
+            print(f"✅ Token da Facta lido do arquivo: {token[:10]}...")
+            return token
+    except FileNotFoundError:
+        print("❌ Arquivo facta_token.txt não encontrado")
+    except Exception as e:
+        print(f"❌ Erro ao ler token da Facta: {e}")
     
-    return token
+    print("❌ Nenhum token da Facta encontrado")
+    return ""
 
 # Configurações
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -964,7 +970,7 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         token = get_facta_token()
     
     if not token:
-        print("Token da Facta não encontrado")
+        print(f"❌ Token da Facta não encontrado para CPF {cpf}")
         return None
     
     # URL da API da Facta (produção)
@@ -991,19 +997,33 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         params["data_fim"] = data_fim.strftime('%d/%m/%Y')
     
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=10)  # Timeout ainda mais reduzido
+        print(f"🔍 Consultando Facta para CPF: {cpf}")
+        print(f"   🌐 URL: {url}")
+        print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Não fornecido")
+        print(f"   📋 Parâmetros: {params}")
+        
+        resp = requests.get(url, headers=headers, params=params, timeout=15)  # Aumentado timeout
+        
+        print(f"   📊 Status Code: {resp.status_code}")
         
         if resp.status_code == 200:
             data = resp.json()
+            print(f"   📄 Resposta: {data}")
+            
             if not data.get("erro", True):
                 propostas = data.get("propostas", [])
+                print(f"   ✅ Encontradas {len(propostas)} propostas para CPF {cpf}")
                 return propostas
             else:
+                print(f"   ❌ Erro na resposta da Facta para CPF {cpf}: {data.get('mensagem', 'Erro desconhecido')}")
                 return []
         else:
+            print(f"   ❌ Erro HTTP {resp.status_code} ao consultar Facta para CPF {cpf}")
+            print(f"   📄 Resposta de erro: {resp.text}")
             return []
             
     except Exception as e:
+        print(f"   ❌ Erro ao consultar Facta para CPF {cpf}: {e}")
         return []
 
 # Cache global para consultas da Facta (evita consultas repetidas na mesma sessão)
@@ -1097,7 +1117,11 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
 
 def analisar_propostas_facta(propostas_dict):
     """Analisa as propostas da Facta e retorna estatísticas."""
+    print(f"🔍 DEBUG - Iniciando análise de propostas Facta...")
+    print(f"   📊 Total de CPFs: {len(propostas_dict)}")
+    
     if not propostas_dict:
+        print(f"   ⚠️ Dicionário de propostas vazio")
         return {
             'total_cpfs_consultados': 0,
             'total_propostas': 0,
@@ -1951,8 +1975,12 @@ def main():
                     cpfs_para_consulta.update(cpfs_status)
             
             if cpfs_para_consulta:
+                print(f"🔍 CPFs para consulta Facta (URA): {len(cpfs_para_consulta)}")
+                print(f"   📋 Primeiros 5 CPFs: {list(cpfs_para_consulta)[:5]}")
+                
                 # Consultar Facta para os CPFs encontrados
                 try:
+                    print(f"🚀 Iniciando consulta Facta para URA...")
                     propostas_facta = consultar_facta_multiplos_cpfs(
                         list(cpfs_para_consulta), 
                         token=None, 
@@ -1961,6 +1989,8 @@ def main():
                         data_fim=data_fim
                     )
                     
+                    print(f"📊 Resultados Facta URA: {len(propostas_facta)} CPFs com propostas")
+                    
                     # Analisar resultados da Facta
                     if propostas_facta:
                         analise_facta = analisar_propostas_facta(propostas_facta)
@@ -1968,14 +1998,20 @@ def main():
                         # Atualizar métricas com dados da Facta (URA)
                         st.session_state["producao_facta_ura"] = analise_facta['valor_total_propostas']
                         st.session_state["total_vendas_facta_ura"] = analise_facta['total_propostas']
+                        
+                        print(f"💰 Produção Facta URA: R$ {analise_facta['valor_total_propostas']:,.2f}")
+                        print(f"📈 Total vendas Facta URA: {analise_facta['total_propostas']}")
                     else:
                         st.session_state["producao_facta_ura"] = 0.0
                         st.session_state["total_vendas_facta_ura"] = 0
+                        print(f"⚠️ Nenhuma proposta encontrada na Facta para URA")
                         
-                except Exception:
+                except Exception as e:
+                    print(f"❌ Erro na consulta Facta URA: {e}")
                     st.session_state["producao_facta_ura"] = 0.0
                     st.session_state["total_vendas_facta_ura"] = 0
             else:
+                print(f"⚠️ Nenhum CPF encontrado para consulta Facta URA")
                 st.session_state["producao_facta_ura"] = 0.0
                 st.session_state["total_vendas_facta_ura"] = 0
             
@@ -3189,6 +3225,29 @@ def test_environment_status():
                 st.sidebar.warning("⚠️ API Facta retornou None")
         except Exception as e:
             st.sidebar.error(f"❌ Erro na API Facta: {str(e)[:50]}...")
+    
+    # Botão para teste da Facta com CPF real
+    if st.sidebar.button("🧪 Teste Facta CPF Real"):
+        try:
+            # Teste com um CPF real (exemplo)
+            cpf_teste = "12345678901"  # Substitua por um CPF real se tiver
+            st.sidebar.info(f"Testando CPF: {cpf_teste}")
+            
+            # Verificar token primeiro
+            token = get_facta_token()
+            if not token:
+                st.sidebar.error("❌ Token da Facta não encontrado")
+            else:
+                st.sidebar.success(f"✅ Token encontrado: {token[:10]}...")
+                
+                # Testar consulta
+                propostas = consultar_facta_por_cpf(cpf_teste)
+                if propostas is not None:
+                    st.sidebar.success(f"✅ Consulta funcionando - {len(propostas)} propostas")
+                else:
+                    st.sidebar.warning("⚠️ Consulta retornou None")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
     
     # Botão para limpar cache da Facta
     if st.sidebar.button("🗑️ Limpar Cache Facta"):
