@@ -1033,14 +1033,20 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
     """Consulta o endpoint da Facta para múltiplos CPFs usando threads otimizadas."""
     global facta_cache
     
+    print(f"🔍 DEBUG - consultar_facta_multiplos_cpfs chamada")
+    print(f"   📊 CPFs recebidos: {len(cpfs) if cpfs else 0}")
+    print(f"   🔑 Token fornecido: {'Sim' if token else 'Não'}")
+    print(f"   📅 Período: {data_ini} a {data_fim}")
+    
     if not cpfs:
+        print(f"   ⚠️ Lista de CPFs vazia")
         return {}
     
     # Limitar o número de CPFs para evitar sobrecarga
-    cpfs_limitados = list(cpfs)[:100]  # Máximo 100 CPFs por consulta
+    cpfs_limitados = list(cpfs)[:50]  # Reduzido para 50 CPFs por consulta
     
-    if len(cpfs) > 100:
-        print(f"⚠️ Limitando consulta a 100 CPFs (de {len(cpfs)} total)")
+    if len(cpfs) > 50:
+        print(f"⚠️ Limitando consulta a 50 CPFs (de {len(cpfs)} total)")
     
     print(f"🚀 Iniciando consulta Facta para {len(cpfs_limitados)} CPFs...")
     inicio = time.time()
@@ -1058,49 +1064,35 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
         else:
             cpfs_para_consultar.append(cpf)
     
+    print(f"🔍 CPFs para consultar: {len(cpfs_para_consultar)} (cache: {len(cpfs_limitados) - len(cpfs_para_consultar)})")
+    
     if cpfs_para_consultar:
-        print(f"🔍 Consultando {len(cpfs_para_consultar)} CPFs (cache: {len(cpfs_limitados) - len(cpfs_para_consultar)})")
-        
-        # Dividir em lotes menores para processamento paralelo
-        tamanho_lote = 20
-        lotes = [cpfs_para_consultar[i:i + tamanho_lote] for i in range(0, len(cpfs_para_consultar), tamanho_lote)]
+        # Simplificar: consultar apenas os primeiros 5 CPFs para teste
+        cpfs_teste = cpfs_para_consultar[:5]
+        print(f"🧪 Testando com primeiros 5 CPFs: {cpfs_teste}")
         
         cpfs_processados = 0
         
         def consultar_cpf(cpf):
             try:
+                print(f"🔍 Consultando CPF: {cpf}")
                 propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
+                print(f"✅ CPF {cpf}: {len(propostas) if propostas else 0} propostas")
                 return cpf, propostas
             except Exception as e:
+                print(f"❌ Erro no CPF {cpf}: {e}")
                 return cpf, []
         
-        # Processar lotes em paralelo
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for lote in lotes:
-                # Submeter lote atual
-                future_to_cpf = {executor.submit(consultar_cpf, cpf): cpf for cpf in lote}
-                
-                # Coletar resultados do lote
-                for future in as_completed(future_to_cpf):
-                    cpf = future_to_cpf[future]
-                    try:
-                        cpf_result, propostas = future.result()
-                        resultados[cpf_result] = propostas
-                        
-                        # Salvar no cache
-                        chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
-                        facta_cache[chave_cache] = propostas
-                        
-                        cpfs_processados += 1
-                        
-                        # Mostrar progresso a cada 10 CPFs
-                        if cpfs_processados % 10 == 0:
-                            tempo_decorrido = time.time() - inicio
-                            print(f"📊 Progresso: {cpfs_processados}/{len(cpfs_para_consultar)} CPFs processados ({tempo_decorrido:.1f}s)")
-                            
-                    except Exception as e:
-                        resultados[cpf] = []
-                        cpfs_processados += 1
+        # Processar CPFs de teste
+        for cpf in cpfs_teste:
+            cpf_result, propostas = consultar_cpf(cpf)
+            resultados[cpf_result] = propostas
+            
+            # Salvar no cache
+            chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
+            facta_cache[chave_cache] = propostas
+            
+            cpfs_processados += 1
     else:
         print(f"✅ Usando cache para todos os {len(cpfs_limitados)} CPFs")
     
@@ -1108,9 +1100,9 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
     cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
     
     print(f"✅ Consulta Facta concluída em {tempo_total:.1f}s:")
-    print(f"   📊 CPFs processados: {len(cpfs_limitados)}")
+    print(f"   📊 CPFs processados: {len(resultados)}")
     print(f"   ✅ CPFs com propostas: {cpfs_com_resultado}")
-    print(f"   ❌ CPFs sem propostas: {len(cpfs_limitados) - cpfs_com_resultado}")
+    print(f"   ❌ CPFs sem propostas: {len(resultados) - cpfs_com_resultado}")
     print(f"   💾 Cache atual: {len(facta_cache)} entradas")
     
     return resultados
@@ -1868,12 +1860,19 @@ def main():
         'Outros': set()
     }
     
-    # Obter dados do Kolmeya via API ANTES de calcular leads
+        # Obter dados do Kolmeya via API ANTES de calcular leads
     print(f"🔍 Consultando API Kolmeya:")
     print(f"   📅 Período: {data_ini} a {data_fim}")
     print(f"   🏢 Centro de custo: {centro_custo_selecionado}")
     print(f"   🕐 Data atual: {datetime.now().date()}")
     print(f"   🔍 É dia atual? {data_fim == datetime.now().date()}")
+    
+    # Verificar se há base carregada
+    if uploaded_file is not None:
+        print(f"📁 Base carregada: {uploaded_file.name}")
+        print(f"📊 Tamanho da base: {len(df_base) if df_base is not None else 0} registros")
+    else:
+        print(f"⚠️ Nenhuma base carregada")
     
     messages, total_acessos = obter_dados_sms_com_filtro(data_ini, data_fim, centro_custo_valor)
     
@@ -1956,23 +1955,38 @@ def main():
     if uploaded_file is not None:
         try:
             df_base = ler_base(uploaded_file)
+            print(f"📊 Base carregada com sucesso: {len(df_base)} registros")
+            
             # Extrair contagem de URA da base com filtro de data e separação por status
+            print(f"🔍 DEBUG - Iniciando extração URA da base...")
             ura_count, ura_por_status, ura_cpfs_por_status = extrair_ura_da_base(df_base, data_ini, data_fim)
+            print(f"🔍 DEBUG - Extração URA concluída:")
+            print(f"   📊 Total URA: {ura_count}")
+            print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
             
             # CONSULTA AUTOMÁTICA NA FACTA
             # Obter CPFs para consulta na Facta baseado no centro de custo selecionado
+            # Extrair CPFs da base para consulta na Facta
+            print(f"🔍 DEBUG - Extraindo CPFs para consulta Facta...")
+            print(f"   🏢 Centro de custo selecionado: {centro_custo_selecionado}")
+            print(f"   📊 CPFs URA por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
+            
             cpfs_para_consulta = set()
             
             if centro_custo_selecionado == "Novo":
                 cpfs_para_consulta = ura_cpfs_por_status.get('Novo', set())
+                print(f"   🎯 Selecionando CPFs 'Novo': {len(cpfs_para_consulta)}")
             elif centro_custo_selecionado == "FGTS":
                 cpfs_para_consulta = ura_cpfs_por_status.get('FGTS', set())
+                print(f"   🎯 Selecionando CPFs 'FGTS': {len(cpfs_para_consulta)}")
             elif centro_custo_selecionado == "Crédito CLT":
                 cpfs_para_consulta = ura_cpfs_por_status.get('CLT', set())
+                print(f"   🎯 Selecionando CPFs 'CLT': {len(cpfs_para_consulta)}")
             else:
                 # Se "TODOS", usar todos os CPFs
                 for cpfs_status in ura_cpfs_por_status.values():
                     cpfs_para_consulta.update(cpfs_status)
+                print(f"   🎯 Selecionando TODOS os CPFs: {len(cpfs_para_consulta)}")
             
             if cpfs_para_consulta:
                 print(f"🔍 CPFs para consulta Facta (URA): {len(cpfs_para_consulta)}")
@@ -3256,6 +3270,37 @@ def test_environment_status():
         facta_cache.clear()
         st.sidebar.success("✅ Cache da Facta limpo!")
         st.sidebar.info(f"Cache tinha {cache_size} entradas")
+    
+    # Botão para forçar consulta Facta
+    if st.sidebar.button("🚀 Forçar Consulta Facta"):
+        try:
+            # Teste com CPFs de exemplo
+            cpfs_teste = ["12345678901", "98765432100", "11122233344"]
+            st.sidebar.info(f"Testando com {len(cpfs_teste)} CPFs de exemplo")
+            
+            # Verificar token
+            token = get_facta_token()
+            if not token:
+                st.sidebar.error("❌ Token da Facta não encontrado")
+            else:
+                st.sidebar.success(f"✅ Token encontrado: {token[:10]}...")
+                
+                # Testar consulta
+                resultados = consultar_facta_multiplos_cpfs(
+                    cpfs_teste, 
+                    token=token, 
+                    max_workers=2, 
+                    data_ini=datetime.now().date() - timedelta(days=30), 
+                    data_fim=datetime.now().date()
+                )
+                
+                if resultados:
+                    cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
+                    st.sidebar.success(f"✅ Consulta funcionando - {cpfs_com_resultado} CPFs com propostas")
+                else:
+                    st.sidebar.warning("⚠️ Consulta retornou vazio")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
 
 if __name__ == "__main__":
     try:
