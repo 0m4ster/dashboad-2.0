@@ -1107,10 +1107,11 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
     
     return resultados
 
-def analisar_propostas_facta(propostas_dict):
+def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
     """Analisa as propostas da Facta e retorna estatísticas."""
     print(f"🔍 DEBUG - Iniciando análise de propostas Facta...")
     print(f"   📊 Total de CPFs: {len(propostas_dict)}")
+    print(f"   🎯 Filtro de status: {filtro_status}")
     
     if not propostas_dict:
         print(f"   ⚠️ Dicionário de propostas vazio")
@@ -1141,18 +1142,39 @@ def analisar_propostas_facta(propostas_dict):
     valor_total = 0.0
     
     for cpf, propostas in propostas_dict.items():
-        # Filtrar apenas propostas com status "16 - CONTRATO PAGO"
-        propostas_contrato_pago = []
+        # Filtrar propostas baseado no filtro selecionado
+        propostas_validas = []
         for proposta in propostas:
             status = proposta.get('status_proposta', '')
-            if status == '16 - CONTRATO PAGO':
-                propostas_contrato_pago.append(proposta)
-        
-        if propostas_contrato_pago:
-            cpfs_com_propostas += 1
-            total_propostas += len(propostas_contrato_pago)
             
-            for proposta in propostas_contrato_pago:
+            # Definir status válidos baseado no filtro
+            if filtro_status == "contrato_pago":
+                status_validos = ['16 - CONTRATO PAGO']
+            elif filtro_status == "validos":
+                status_validos = [
+                    '16 - CONTRATO PAGO',
+                    '28 - CANCELADO',  # Pode ter sido pago antes de cancelar
+                    '15 - CONTRATO ASSINADO',
+                    '14 - PROPOSTA APROVADA',
+                    '13 - PROPOSTA EM ANÁLISE',
+                    '12 - PROPOSTA ENVIADA',
+                    '11 - PROPOSTA CRIADA'
+                ]
+            else:  # "todos"
+                status_validos = None  # Incluir todos os status
+            
+            # Verificar se deve incluir a proposta
+            if status_validos is None or status in status_validos:
+                propostas_validas.append(proposta)
+                print(f"   ✅ Proposta incluída - CPF: {cpf}, Status: {status}, Valor: {proposta.get('valor_af', 0)}")
+            else:
+                print(f"   ❌ Proposta excluída - CPF: {cpf}, Status: {status}")
+        
+        if propostas_validas:
+            cpfs_com_propostas += 1
+            total_propostas += len(propostas_validas)
+            
+            for proposta in propostas_validas:
                 # Contar por status
                 status = proposta.get('status_proposta', 'Sem Status')
                 propostas_por_status[status] = propostas_por_status.get(status, 0) + 1
@@ -1179,13 +1201,14 @@ def analisar_propostas_facta(propostas_dict):
         else:
             cpfs_sem_propostas += 1
     
-    print(f"🔍 DEBUG - Análise Facta (apenas CONTRATO PAGO):")
+    print(f"🔍 DEBUG - Análise Facta (status válidos incluindo CANCELADO):")
     print(f"   📊 Total CPFs consultados: {total_cpfs}")
-    print(f"   ✅ CPFs com contratos pagos: {cpfs_com_propostas}")
-    print(f"   ❌ CPFs sem contratos pagos: {cpfs_sem_propostas}")
-    print(f"   💰 Total de contratos pagos: {total_propostas}")
+    print(f"   ✅ CPFs com propostas válidas: {cpfs_com_propostas}")
+    print(f"   ❌ CPFs sem propostas válidas: {cpfs_sem_propostas}")
+    print(f"   💰 Total de propostas válidas: {total_propostas}")
     print(f"   💰 Valor total (valor_af): R$ {valor_total:,.2f}")
     print(f"   📋 Campo usado: 'valor_af' (não 'valor_bruto')")
+    print(f"   📋 Status incluídos: CONTRATO PAGO, CANCELADO, ASSINADO, APROVADA, etc.")
     
     return {
         'total_cpfs_consultados': total_cpfs,
@@ -1788,6 +1811,22 @@ def main():
         key="centro_custo_filtro"
     )
     centro_custo_valor = centro_custo_opcoes[centro_custo_selecionado]
+    
+    # Filtro de status da Facta
+    st.sidebar.markdown("### 📊 Filtros Facta")
+    status_facta_opcoes = {
+        "Todos os Status": "todos",
+        "Apenas Contrato Pago": "contrato_pago",
+        "Status Válidos (Incluindo Cancelado)": "validos"
+    }
+    
+    status_facta_selecionado = st.sidebar.selectbox(
+        "Status Facta",
+        options=list(status_facta_opcoes.keys()),
+        index=2,  # "Status Válidos" será a opção padrão
+        key="status_facta_filtro"
+    )
+    status_facta_valor = status_facta_opcoes[status_facta_selecionado]
 
     # Saldo Kolmeya com tratamento de erro melhorado
     col_saldo, col_vazio = st.columns([0.9, 5.1])
@@ -2007,7 +2046,7 @@ def main():
                     
                     # Analisar resultados da Facta
                     if propostas_facta:
-                        analise_facta = analisar_propostas_facta(propostas_facta)
+                        analise_facta = analisar_propostas_facta(propostas_facta, status_facta_valor)
                         
                         # Atualizar métricas com dados da Facta (URA)
                         st.session_state["producao_facta_ura"] = analise_facta['valor_total_propostas']
