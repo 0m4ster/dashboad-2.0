@@ -996,11 +996,18 @@ def analisar_propostas_facta(propostas_dict):
     valor_total = 0.0
     
     for cpf, propostas in propostas_dict.items():
-        if propostas:
+        # Filtrar apenas propostas com status "16 - CONTRATO PAGO"
+        propostas_contrato_pago = []
+        for proposta in propostas:
+            status = proposta.get('status_proposta', '')
+            if status == '16 - CONTRATO PAGO':
+                propostas_contrato_pago.append(proposta)
+        
+        if propostas_contrato_pago:
             cpfs_com_propostas += 1
-            total_propostas += len(propostas)
+            total_propostas += len(propostas_contrato_pago)
             
-            for proposta in propostas:
+            for proposta in propostas_contrato_pago:
                 # Contar por status
                 status = proposta.get('status_proposta', 'Sem Status')
                 propostas_por_status[status] = propostas_por_status.get(status, 0) + 1
@@ -1026,6 +1033,13 @@ def analisar_propostas_facta(propostas_dict):
                 valor_total += valor_bruto
         else:
             cpfs_sem_propostas += 1
+    
+    print(f"🔍 DEBUG - Análise Facta (apenas CONTRATO PAGO):")
+    print(f"   📊 Total CPFs consultados: {total_cpfs}")
+    print(f"   ✅ CPFs com contratos pagos: {cpfs_com_propostas}")
+    print(f"   ❌ CPFs sem contratos pagos: {cpfs_sem_propostas}")
+    print(f"   💰 Total de contratos pagos: {total_propostas}")
+    print(f"   💰 Valor total contratos pagos: R$ {valor_total:,.2f}")
     
     return {
         'total_cpfs_consultados': total_cpfs,
@@ -2082,8 +2096,32 @@ def main():
         print(f"   🏢 Centro de custo da primeira: {messages[0].get('centro_custo', 'N/A')}")
     print(f"   💰 Investimento calculado: R$ {investimento:.2f}")
     
-    # CAMPO 1: Taxa de 
+    # CAMPO 1: Taxa de entrega
     taxa_entrega = (mensagens_entregues / total_mensagens * 100) if total_mensagens > 0 else 0.0
+    
+    # CORREÇÃO: Calcular leads gerados comparando telefones da API com telefones da base
+    telefones_kolmeya = extrair_telefones_kolmeya(messages) if messages else set()
+    telefones_base_kolmeya = set()
+    
+    if uploaded_file is not None:
+        try:
+            df_base = ler_base(uploaded_file)
+            telefones_base_kolmeya = extrair_telefones_da_base(df_base, data_ini, data_fim)
+            
+            # Calcular telefones coincidentes (leads gerados)
+            telefones_coincidentes = telefones_kolmeya & telefones_base_kolmeya
+            leads_gerados_kolmeya = len(telefones_coincidentes)
+            
+            print(f"🔍 DEBUG - Comparação Kolmeya vs Base:")
+            print(f"   📱 Telefones API Kolmeya: {len(telefones_kolmeya)}")
+            print(f"   📱 Telefones Base: {len(telefones_base_kolmeya)}")
+            print(f"   ✅ Telefones Coincidentes (Leads Gerados): {leads_gerados_kolmeya}")
+        except Exception as e:
+            print(f"❌ Erro ao comparar telefones: {e}")
+            leads_gerados_kolmeya = 0
+    else:
+        leads_gerados_kolmeya = 0
+        print(f"⚠️ Nenhuma base carregada para comparação")
     
     # Dados reais do Kolmeya - usar dados da Facta quando disponíveis
     if centro_custo_selecionado == "FGTS":
@@ -2109,8 +2147,6 @@ def main():
         roi = producao - investimento
     else:
         roi = 0.0
-    
-    disparos_por_lead = total_acessos / total_mensagens * 100 if total_mensagens > 0 else 0
     
     # CAMPO 2: Interação (Disparos por Lead) - dados reais da API
     disparos_por_lead = total_acessos / total_mensagens * 100 if total_mensagens > 0 else 0
@@ -2309,7 +2345,7 @@ def main():
                 'taxa_entrega': safe_float(taxa_entrega),
                 'total_vendas': safe_int(total_vendas),
                 'producao': safe_float(producao),
-                'leads_gerados': safe_int(telefones_base),
+                'leads_gerados': safe_int(leads_gerados_kolmeya),
                 'ticket_medio': safe_float(ticket_medio),
                 'roi': safe_float(roi)
             }
@@ -2515,7 +2551,7 @@ def main():
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">Leads Gerados</div>
-                        <div class="detail-value">{telefones_base:,}</div>
+                        <div class="detail-value">{leads_gerados_kolmeya:,}</div>
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">Ticket Médio</div>
