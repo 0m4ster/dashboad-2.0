@@ -455,18 +455,24 @@ def obter_dados_sms_com_filtro(data_ini, data_fim, tenant_segment_id=None):
     # Formatar datas para o formato esperado pela API
     start_at = data_ini.strftime('%Y-%m-%d 00:00')
     
-    # Se a data final for hoje, usar o horário atual para pegar dados em tempo real
-    if data_fim == datetime.now().date():
-        end_at = datetime.now().strftime('%Y-%m-%d %H:%M')
-        print(f"🔍 DEBUG - Data final é hoje, usando horário atual: {end_at}")
+    # CORREÇÃO: Usar timezone brasileiro para garantir que a data seja sempre do Brasil
+    from datetime import timezone, timedelta
+    tz_brasil = timezone(timedelta(hours=-3))
+    agora_brasil = datetime.now(tz_brasil)
+    
+    # Se a data final for hoje (no Brasil), usar o horário atual para pegar dados em tempo real
+    if data_fim == agora_brasil.date():
+        end_at = agora_brasil.strftime('%Y-%m-%d %H:%M')
+        print(f"🔍 DEBUG - Data final é hoje (BR), usando horário atual: {end_at}")
     else:
         end_at = data_fim.strftime('%Y-%m-%d 23:59')
-        print(f"🔍 DEBUG - Data final não é hoje, usando 23:59: {end_at}")
+        print(f"🔍 DEBUG - Data final não é hoje (BR), usando 23:59: {end_at}")
     
     print(f"🔍 Consultando API real do Kolmeya:")
     print(f"   📅 Período: {start_at} a {end_at}")
     print(f"   🏢 Centro de custo: {tenant_segment_id}")
-    print(f"   🕐 Horário atual: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"   🕐 Horário atual (BR): {agora_brasil.strftime('%Y-%m-%d %H:%M')}")
+    print(f"   🌍 Fuso horário: UTC-3 (Brasil)")
     
     # Consulta real à API
     try:
@@ -830,11 +836,15 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     if not messages or not data_ini or not data_fim:
         return messages
     
-    # Converte as datas para datetime
-    data_ini_dt = datetime.combine(data_ini, datetime.min.time())
-    data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+    # CORREÇÃO: Usar timezone brasileiro para consistência
+    from datetime import timezone, timedelta
+    tz_brasil = timezone(timedelta(hours=-3))
     
-    print(f"🔍 DEBUG - Filtro por data:")
+    # Converte as datas para datetime com timezone brasileiro
+    data_ini_dt = datetime.combine(data_ini, datetime.min.time()).replace(tzinfo=tz_brasil)
+    data_fim_dt = datetime.combine(data_fim, datetime.max.time()).replace(tzinfo=tz_brasil)
+    
+    print(f"🔍 DEBUG - Filtro por data (fuso BR):")
     print(f"   📅 Data inicial: {data_ini} -> {data_ini_dt}")
     print(f"   📅 Data final: {data_fim} -> {data_fim_dt}")
     print(f"   📊 Mensagens antes do filtro: {len(messages)}")
@@ -850,7 +860,8 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
                     data_str = str(msg['enviada_em'])
                     # Formato: DD/MM/YYYY HH:MM
                     if len(data_str) >= 16 and '/' in data_str:
-                        data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                        # CORREÇÃO: Assumir que a data da API está no fuso brasileiro
+                        data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M').replace(tzinfo=tz_brasil)
                         mensagens_processadas += 1
                         
                         # Se está no período, inclui a mensagem
