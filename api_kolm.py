@@ -1073,9 +1073,9 @@ def analisar_propostas_facta(propostas_dict):
                 tipo_operacao = proposta.get('tipo_operacao', 'Sem Tipo')
                 propostas_por_tipo_operacao[tipo_operacao] = propostas_por_tipo_operacao.get(tipo_operacao, 0) + 1
                 
-                # Somar valores
-                valor_bruto = float(proposta.get('valor_bruto', 0))
-                valor_total += valor_bruto
+                # Somar valores - usar valor_af em vez de valor_bruto
+                valor_af = float(proposta.get('valor_af', 0))
+                valor_total += valor_af
         else:
             cpfs_sem_propostas += 1
     
@@ -1084,7 +1084,8 @@ def analisar_propostas_facta(propostas_dict):
     print(f"   ✅ CPFs com contratos pagos: {cpfs_com_propostas}")
     print(f"   ❌ CPFs sem contratos pagos: {cpfs_sem_propostas}")
     print(f"   💰 Total de contratos pagos: {total_propostas}")
-    print(f"   💰 Valor total contratos pagos: R$ {valor_total:,.2f}")
+    print(f"   💰 Valor total (valor_af): R$ {valor_total:,.2f}")
+    print(f"   📋 Campo usado: 'valor_af' (não 'valor_bruto')")
     
     return {
         'total_cpfs_consultados': total_cpfs,
@@ -2129,7 +2130,10 @@ def main():
     # Dados reais do Kolmeya via API
     total_mensagens = len(messages) if messages else 0
     mensagens_entregues = len([msg for msg in messages if msg.get('status') == 'delivered']) if messages else 0
-    investimento = total_mensagens * 0.08
+    investimento = total_mensagens * 0.0821972734562951
+    disp_venda = total_vendas / total_mensagens
+    leads_p_venda = total_vendas / leads_gerados_kolmeya
+
     
     # Debug: Verificar dados recebidos
     print(f"🔍 DEBUG - Dados Kolmeya recebidos:")
@@ -2601,6 +2605,14 @@ def main():
                     <div class="detail-item">
                         <div class="detail-label">Ticket Médio</div>
                         <div class="detail-value">{formatar_real(ticket_medio)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Leads p/ venda</div>
+                        <div class="detail-value">{formatar_real(leads_p_venda)}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Disp. p/ venda</div>
+                        <div class="detail-value">{formatar_real(disp_venda)}</div>
                     </div>
                 </div>
             </div>
