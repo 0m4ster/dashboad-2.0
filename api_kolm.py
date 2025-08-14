@@ -1636,10 +1636,108 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
     return ad_count, ad_por_status, ad_cpfs_por_status
 
 def main():
-    st.set_page_config(page_title="Dashboard SMS", layout="centered")
+    # Configuração da página com layout otimizado
+    st.set_page_config(
+        page_title="Dashboard Servix",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Estilos CSS para evitar problemas de JavaScript
+    st.markdown("""
+    <style>
+        .stApp {
+            background-color: #0e1117;
+        }
+        .main .block-container {
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+        .stButton > button {
+            border-radius: 8px;
+            border: 1px solid #4CAF50;
+            background-color: #4CAF50;
+            color: white;
+            padding: 0.5rem 1rem;
+            font-weight: bold;
+        }
+        .stButton > button:hover {
+            background-color: #45a049;
+            border-color: #45a049;
+        }
+        .stSelectbox > div > div {
+            background-color: #262730;
+            border-color: #4CAF50;
+        }
+        .stDateInput > div > div {
+            background-color: #262730;
+            border-color: #4CAF50;
+        }
+        
+        /* Prevenir problemas de JavaScript */
+        .js-plotly-plot {
+            max-width: 100% !important;
+        }
+        
+        /* Melhorar responsividade */
+        @media (max-width: 768px) {
+            .main .block-container {
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+        }
+        
+        /* Estilos para mensagens de erro */
+        .error-message {
+            background-color: rgba(255, 0, 0, 0.1);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            color: #ff6b6b;
+        }
+        
+        /* Estilos para mensagens de sucesso */
+        .success-message {
+            background-color: rgba(0, 255, 0, 0.1);
+            border: 1px solid rgba(0, 255, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            color: #51cf66;
+        }
+    </style>
+    
+    <script>
+        // Prevenir erros de JavaScript
+        window.addEventListener('error', function(e) {
+            console.log('Erro JavaScript capturado:', e.message);
+            return false;
+        });
+        
+        // Prevenir erros de módulos dinâmicos
+        window.addEventListener('unhandledrejection', function(e) {
+            console.log('Promise rejeitada:', e.reason);
+            e.preventDefault();
+        });
+        
+        // Função para recarregar a página em caso de erro
+        function reloadOnError() {
+            setTimeout(function() {
+                if (document.querySelector('.error-message')) {
+                    window.location.reload();
+                }
+            }, 5000);
+        }
+        
+        // Executar após carregamento da página
+        document.addEventListener('DOMContentLoaded', reloadOnError);
+    </script>
+    """, unsafe_allow_html=True)
     
     if HAS_AUTOREFRESH:
-        st_autorefresh(interval=2 * 60 * 1000, key="datarefresh")
+        st_autorefresh(interval=5 * 60 * 1000, key="datarefresh")  # Aumentado para 5 minutos
     
     # Adicionar teste de ambiente na sidebar
     test_environment_status()
@@ -1675,22 +1773,42 @@ def main():
     )
     centro_custo_valor = centro_custo_opcoes[centro_custo_selecionado]
 
-    # Saldo Kolmeya
+    # Saldo Kolmeya com tratamento de erro melhorado
     col_saldo, col_vazio = st.columns([0.9, 5.1])
     
     with col_saldo:
-        saldo_kolmeya = obter_saldo_kolmeya()
-        st.markdown(
-            f"""
-            <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid rgba(162, 89, 255, 0.5); border-radius: 16px; padding: 24px 32px; color: #fff; min-width: 320px; min-height: 90px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 24px; display: flex; flex-direction: column; align-items: center;'>
-                <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Saldo Atual Kolmeya</div>
-                <div style='font-size: 2.5em; font-weight: bold; color: #fff;'>
-                    {formatar_real(saldo_kolmeya)}
+        try:
+            saldo_kolmeya = obter_saldo_kolmeya()
+            
+            # Verificar se o saldo é válido
+            if saldo_kolmeya is None or saldo_kolmeya < 0:
+                saldo_kolmeya = 0.0
+                status_saldo = "⚠️ Erro na consulta"
+                cor_borda = "rgba(255, 165, 0, 0.5)"  # Laranja para erro
+            else:
+                status_saldo = "✅ Saldo atualizado"
+                cor_borda = "rgba(162, 89, 255, 0.5)"  # Roxo para sucesso
+            
+            st.markdown(
+                f"""
+                <div style='background: rgba(40, 24, 70, 0.96); border: 2.5px solid {cor_borda}; border-radius: 16px; padding: 24px 32px; color: #fff; min-width: 320px; min-height: 90px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); margin-bottom: 24px; display: flex; flex-direction: column; align-items: center;'>
+                    <div style='font-size: 1.3em; color: #e0d7f7; font-weight: bold; margin-bottom: 8px;'>Saldo Atual Kolmeya</div>
+                    <div style='font-size: 2.5em; font-weight: bold; color: #fff;'>
+                        {formatar_real(saldo_kolmeya)}
+                    </div>
+                    <div style='font-size: 0.9em; color: #b0b0b0; margin-top: 8px;'>{status_saldo}</div>
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # Botão para atualizar saldo manualmente
+            if st.button("🔄 Atualizar Saldo", key="atualizar_saldo"):
+                st.rerun()
+                
+        except Exception as e:
+            st.error(f"❌ Erro ao obter saldo: {str(e)}")
+            saldo_kolmeya = 0.0
 
     # Valores zerados para produção e vendas
     st.session_state["producao_facta_ura"] = 0.0
@@ -3081,4 +3199,12 @@ def test_environment_status():
         st.sidebar.info(f"Cache tinha {cache_size} entradas")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(f"❌ Erro crítico na aplicação: {str(e)}")
+        st.exception(e)
+        
+        # Botão para tentar recarregar
+        if st.button("🔄 Tentar Novamente"):
+            st.rerun()
