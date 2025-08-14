@@ -13,7 +13,14 @@ from collections import Counter
 from requests.adapters import HTTPAdapter
 import ssl
 import asyncio
-import httpx
+
+# Verificar se httpx está disponível
+try:
+    import httpx
+    HAS_HTTPX = True
+except ImportError:
+    HAS_HTTPX = False
+    print("⚠️ httpx não encontrado. Usando versão otimizada com requests.")
 
 # Importar gerenciador de banco de dados
 try:
@@ -1010,49 +1017,8 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
 
 
 
-async def consultar_facta_async(cpf, token, data_ini, data_fim, client):
-    """Consulta assíncrona individual da Facta para um CPF."""
-    try:
-        # URL da API da Facta
-        url = "https://webservice.facta.com.br/proposta/andamento-propostas"
-        
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        
-        # Parâmetros da consulta
-        params = {
-            "cpf": cpf,
-            "convenio": 3,  # FACTA FINANCEIRA
-            "quantidade": 5000,
-            "pagina": 1
-        }
-        
-        # Adicionar filtros de data se fornecidos
-        if data_ini:
-            params["data_ini"] = data_ini.strftime('%d/%m/%Y')
-        if data_fim:
-            params["data_fim"] = data_fim.strftime('%d/%m/%Y')
-        
-        # Fazer requisição assíncrona
-        async with client.stream("GET", url, headers=headers, params=params, timeout=15.0) as response:
-            if response.status_code == 200:
-                data = await response.json()
-                if not data.get("erro", True):
-                    propostas = data.get("propostas", [])
-                    return cpf, propostas
-                else:
-                    return cpf, []
-            else:
-                return cpf, []
-                
-    except Exception as e:
-        return cpf, []
-
-async def consultar_facta_multiplos_cpfs_async(cpfs, token=None, data_ini=None, data_fim=None, max_concurrent=20):
-    """Consulta o endpoint da Facta para múltiplos CPFs usando httpx assíncrono (MODO TURBO)."""
+def consultar_facta_multiplos_cpfs_turbo(cpfs, token=None, data_ini=None, data_fim=None, max_workers=20):
+    """Versão turbo otimizada usando requests com ThreadPoolExecutor otimizado."""
     if not cpfs:
         return {}
     
@@ -1064,56 +1030,96 @@ async def consultar_facta_multiplos_cpfs_async(cpfs, token=None, data_ini=None, 
     
     resultados = {}
     
-    # Configurar cliente httpx com keep-alive e limites otimizados
-    limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
+    def consultar_cpf_turbo(cpf):
+        try:
+            # URL da API da Facta
+            url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+            
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Connection": "keep-alive"
+            }
+            
+            # Parâmetros da consulta
+            params = {
+                "cpf": cpf,
+                "convenio": 3,  # FACTA FINANCEIRA
+                "quantidade": 5000,
+                "pagina": 1
+            }
+            
+            # Adicionar filtros de data se fornecidos
+            if data_ini:
+                params["data_ini"] = data_ini.strftime('%d/%m/%Y')
+            if data_fim:
+                params["data_fim"] = data_fim.strftime('%d/%m/%Y')
+            
+            # Fazer requisição otimizada
+            with requests.Session() as session:
+                session.headers.update(headers)
+                # Configurar adapter com keep-alive
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=max_workers,
+                    pool_maxsize=max_workers,
+                    max_retries=3
+                )
+                session.mount('http://', adapter)
+                session.mount('https://', adapter)
+                
+                response = session.get(url, params=params, timeout=15)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if not data.get("erro", True):
+                        propostas = data.get("propostas", [])
+                        return cpf, propostas
+                    else:
+                        return cpf, []
+                else:
+                    return cpf, []
+                    
+        except Exception as e:
+            return cpf, []
     
-    async with httpx.AsyncClient(
-        limits=limits,
-        timeout=httpx.Timeout(15.0),
-        headers={"Connection": "keep-alive"}
-    ) as client:
+    # Usar ThreadPoolExecutor otimizado
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submeter todas as consultas
+        future_to_cpf = {executor.submit(consultar_cpf_turbo, cpf): cpf for cpf in cpfs}
         
-        # Criar semáforo para limitar concorrência
-        semaphore = asyncio.Semaphore(max_concurrent)
-        
-        async def consultar_com_semaphore(cpf):
-            async with semaphore:
-                return await consultar_facta_async(cpf, token, data_ini, data_fim, client)
-        
-        # Criar todas as tarefas assíncronas
-        tasks = [consultar_com_semaphore(cpf) for cpf in cpfs]
-        
-        # Executar todas as consultas em paralelo
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Processar resultados
-        for response in responses:
-            if isinstance(response, tuple) and len(response) == 2:
-                cpf, propostas = response
-                resultados[cpf] = propostas
-            else:
-                # Em caso de erro, adicionar CPF com lista vazia
-                continue
+        # Coletar resultados
+        for future in as_completed(future_to_cpf):
+            cpf = future_to_cpf[future]
+            try:
+                cpf_result, propostas = future.result()
+                resultados[cpf_result] = propostas
+            except Exception as e:
+                resultados[cpf] = []
     
     return resultados
 
 def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
-    """Wrapper para compatibilidade - executa a versão assíncrona."""
+    """Wrapper para compatibilidade - executa a versão turbo ou normal."""
     if not cpfs:
         return {}
     
-    # Executar a versão assíncrona
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        resultados = loop.run_until_complete(
-            consultar_facta_multiplos_cpfs_async(cpfs, token, data_ini, data_fim)
-        )
-        loop.close()
-        return resultados
-    except Exception as e:
-        # Fallback para versão síncrona em caso de erro
-        return consultar_facta_multiplos_cpfs_sync(cpfs, token, max_workers, data_ini, data_fim)
+    # Se httpx estiver disponível, usar versão assíncrona
+    if HAS_HTTPX:
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            resultados = loop.run_until_complete(
+                consultar_facta_multiplos_cpfs_async(cpfs, token, data_ini, data_fim)
+            )
+            loop.close()
+            return resultados
+        except Exception as e:
+            # Fallback para versão turbo otimizada
+            return consultar_facta_multiplos_cpfs_turbo(cpfs, token, data_ini, data_fim, max_workers)
+    else:
+        # Usar versão turbo otimizada com requests
+        return consultar_facta_multiplos_cpfs_turbo(cpfs, token, data_ini, data_fim, max_workers)
 
 def consultar_facta_multiplos_cpfs_sync(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
     """Versão síncrona de fallback usando threads."""
@@ -1148,8 +1154,10 @@ def consultar_facta_multiplos_cpfs_sync(cpfs, token=None, max_workers=5, data_in
 def consultar_facta_com_modo(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None, modo="turbo"):
     """Função auxiliar para consultar Facta com o modo selecionado."""
     if modo == "turbo":
-        return consultar_facta_multiplos_cpfs(cpfs, token, data_ini, data_fim)
+        # Usar versão turbo otimizada
+        return consultar_facta_multiplos_cpfs_turbo(cpfs, token, data_ini, data_fim, max_workers)
     else:
+        # Usar versão normal
         return consultar_facta_multiplos_cpfs_sync(cpfs, token, max_workers, data_ini, data_fim)
 
 def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
@@ -1860,7 +1868,7 @@ def main():
     
     # Modo de consulta da Facta
     modo_consulta_opcoes = {
-        "Turbo (Assíncrono)": "turbo",
+        "Turbo (Otimizado)": "turbo",
         "Normal (Threads)": "normal"
     }
     
@@ -3338,7 +3346,7 @@ def test_environment_status():
                 
                 # Testar consulta turbo
                 inicio = time.time()
-                resultados = consultar_facta_multiplos_cpfs(
+                resultados = consultar_facta_multiplos_cpfs_turbo(
                     cpfs_teste, 
                     token=token, 
                     data_ini=datetime.now().date() - timedelta(days=30), 
