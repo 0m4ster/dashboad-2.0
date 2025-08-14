@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from requests.adapters import HTTPAdapter
 import ssl
+import asyncio
+import httpx
 
 # Importar gerenciador de banco de dados
 try:
@@ -1008,8 +1010,113 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
 
 
 
+async def consultar_facta_async(cpf, token, data_ini, data_fim, client):
+    """Consulta assíncrona individual da Facta para um CPF."""
+    try:
+        # URL da API da Facta
+        url = "https://webservice.facta.com.br/proposta/andamento-propostas"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        # Parâmetros da consulta
+        params = {
+            "cpf": cpf,
+            "convenio": 3,  # FACTA FINANCEIRA
+            "quantidade": 5000,
+            "pagina": 1
+        }
+        
+        # Adicionar filtros de data se fornecidos
+        if data_ini:
+            params["data_ini"] = data_ini.strftime('%d/%m/%Y')
+        if data_fim:
+            params["data_fim"] = data_fim.strftime('%d/%m/%Y')
+        
+        # Fazer requisição assíncrona
+        async with client.stream("GET", url, headers=headers, params=params, timeout=15.0) as response:
+            if response.status_code == 200:
+                data = await response.json()
+                if not data.get("erro", True):
+                    propostas = data.get("propostas", [])
+                    return cpf, propostas
+                else:
+                    return cpf, []
+            else:
+                return cpf, []
+                
+    except Exception as e:
+        return cpf, []
+
+async def consultar_facta_multiplos_cpfs_async(cpfs, token=None, data_ini=None, data_fim=None, max_concurrent=20):
+    """Consulta o endpoint da Facta para múltiplos CPFs usando httpx assíncrono (MODO TURBO)."""
+    if not cpfs:
+        return {}
+    
+    if token is None:
+        token = get_facta_token()
+    
+    if not token:
+        return {}
+    
+    resultados = {}
+    
+    # Configurar cliente httpx com keep-alive e limites otimizados
+    limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
+    
+    async with httpx.AsyncClient(
+        limits=limits,
+        timeout=httpx.Timeout(15.0),
+        headers={"Connection": "keep-alive"}
+    ) as client:
+        
+        # Criar semáforo para limitar concorrência
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def consultar_com_semaphore(cpf):
+            async with semaphore:
+                return await consultar_facta_async(cpf, token, data_ini, data_fim, client)
+        
+        # Criar todas as tarefas assíncronas
+        tasks = [consultar_com_semaphore(cpf) for cpf in cpfs]
+        
+        # Executar todas as consultas em paralelo
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Processar resultados
+        for response in responses:
+            if isinstance(response, tuple) and len(response) == 2:
+                cpf, propostas = response
+                resultados[cpf] = propostas
+            else:
+                # Em caso de erro, adicionar CPF com lista vazia
+                continue
+    
+    return resultados
+
 def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
-    """Consulta o endpoint da Facta para múltiplos CPFs usando threads."""
+    """Wrapper para compatibilidade - executa a versão assíncrona."""
+    if not cpfs:
+        return {}
+    
+    # Executar a versão assíncrona
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        resultados = loop.run_until_complete(
+            consultar_facta_multiplos_cpfs_async(cpfs, token, data_ini, data_fim)
+        )
+        loop.close()
+        return resultados
+    except Exception as e:
+        # Fallback para versão síncrona em caso de erro
+        return consultar_facta_multiplos_cpfs_sync(cpfs, token, max_workers, data_ini, data_fim)
+
+def consultar_facta_multiplos_cpfs_sync(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None):
+    """Versão síncrona de fallback usando threads."""
     if not cpfs:
         return {}
     
@@ -1037,6 +1144,13 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=5, data_ini=Non
                 resultados[cpf] = []
     
     return resultados
+
+def consultar_facta_com_modo(cpfs, token=None, max_workers=5, data_ini=None, data_fim=None, modo="turbo"):
+    """Função auxiliar para consultar Facta com o modo selecionado."""
+    if modo == "turbo":
+        return consultar_facta_multiplos_cpfs(cpfs, token, data_ini, data_fim)
+    else:
+        return consultar_facta_multiplos_cpfs_sync(cpfs, token, max_workers, data_ini, data_fim)
 
 def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
     """Analisa as propostas da Facta e retorna estatísticas."""
@@ -1743,6 +1857,20 @@ def main():
         key="status_facta_filtro"
     )
     status_facta_valor = status_facta_opcoes[status_facta_selecionado]
+    
+    # Modo de consulta da Facta
+    modo_consulta_opcoes = {
+        "Turbo (Assíncrono)": "turbo",
+        "Normal (Threads)": "normal"
+    }
+    
+    modo_consulta_selecionado = st.sidebar.selectbox(
+        "Modo Consulta Facta",
+        options=list(modo_consulta_opcoes.keys()),
+        index=0,  # "Turbo" será a opção padrão
+        key="modo_consulta_facta"
+    )
+    modo_consulta_valor = modo_consulta_opcoes[modo_consulta_selecionado]
 
     # Saldo Kolmeya com tratamento de erro melhorado
     col_saldo, col_vazio = st.columns([0.9, 5.1])
@@ -1933,12 +2061,13 @@ def main():
             if cpfs_para_consulta:
                 # Consultar Facta para os CPFs encontrados
                 try:
-                    propostas_facta = consultar_facta_multiplos_cpfs(
+                    propostas_facta = consultar_facta_com_modo(
                         list(cpfs_para_consulta), 
                         token=None, 
                         max_workers=3, 
                         data_ini=data_ini, 
-                        data_fim=data_fim
+                        data_fim=data_fim,
+                        modo=modo_consulta_valor
                     )
                     
                     # Analisar resultados da Facta
@@ -3192,6 +3321,38 @@ def test_environment_status():
                     st.sidebar.warning("⚠️ Consulta retornou None")
         except Exception as e:
             st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
+    
+    # Botão para teste da versão turbo
+    if st.sidebar.button("🚀 Teste Facta Turbo"):
+        try:
+            # Teste com múltiplos CPFs
+            cpfs_teste = ["12345678901", "98765432100", "11122233344", "55566677788", "99988877766"]
+            st.sidebar.info(f"Testando versão turbo com {len(cpfs_teste)} CPFs")
+            
+            # Verificar token primeiro
+            token = get_facta_token()
+            if not token:
+                st.sidebar.error("❌ Token da Facta não encontrado")
+            else:
+                st.sidebar.success(f"✅ Token encontrado: {token[:10]}...")
+                
+                # Testar consulta turbo
+                inicio = time.time()
+                resultados = consultar_facta_multiplos_cpfs(
+                    cpfs_teste, 
+                    token=token, 
+                    data_ini=datetime.now().date() - timedelta(days=30), 
+                    data_fim=datetime.now().date()
+                )
+                tempo_total = time.time() - inicio
+                
+                if resultados:
+                    cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
+                    st.sidebar.success(f"✅ Turbo funcionando - {cpfs_com_resultado} CPFs com propostas em {tempo_total:.2f}s")
+                else:
+                    st.sidebar.warning(f"⚠️ Turbo retornou vazio em {tempo_total:.2f}s")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro no teste turbo: {str(e)[:50]}...")
     
 
 
