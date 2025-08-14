@@ -2131,8 +2131,11 @@ def main():
     total_mensagens = len(messages) if messages else 0
     mensagens_entregues = len([msg for msg in messages if msg.get('status') == 'delivered']) if messages else 0
     investimento = total_mensagens * 0.0821972734562951
-    disp_venda = total_vendas / total_mensagens
-    leads_p_venda = total_vendas / leads_gerados_kolmeya
+    
+    # Inicializar variáveis para evitar erro
+    total_vendas = 0
+    producao = 0.0
+    leads_gerados_kolmeya = 0
 
     
     # Debug: Verificar dados recebidos
@@ -2199,6 +2202,10 @@ def main():
     
     # CAMPO 2: Interação (Disparos por Lead) - dados reais da API
     disparos_por_lead = total_acessos / total_mensagens * 100 if total_mensagens > 0 else 0
+    
+    # Calcular métricas após definir todas as variáveis
+    disp_venda = total_vendas / total_mensagens if total_mensagens > 0 else 0
+    leads_p_venda = total_vendas / leads_gerados_kolmeya if leads_gerados_kolmeya > 0 else 0
 
 
     # Dados do painel 4NET baseados APENAS nos dados da URA (UTM source = "URA")
