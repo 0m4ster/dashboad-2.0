@@ -445,8 +445,22 @@ def obter_saldo_kolmeya(token=None):
         print("❌ Token do Kolmeya não encontrado para consulta de saldo")
         return 0.0
     
+    # Verificar se o token tem formato válido
+    if len(token) < 10:
+        print("❌ Token do Kolmeya parece inválido (muito curto)")
+        return 0.0
+    
     try:
-        url = "https://kolmeya.com.br/api/v1/account/balance"
+        # Tentar diferentes endpoints possíveis para o saldo
+        endpoints = [
+            "https://kolmeya.com.br/api/v1/account/balance",
+            "https://kolmeya.com.br/api/v1/balance",
+            "https://kolmeya.com.br/api/account/balance",
+            "https://kolmeya.com.br/api/balance",
+            "https://api.kolmeya.com.br/v1/account/balance",
+            "https://api.kolmeya.com.br/v1/balance"
+        ]
+        
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -454,38 +468,51 @@ def obter_saldo_kolmeya(token=None):
         }
         
         print(f"🔍 Consultando saldo Kolmeya:")
-        print(f"   🌐 URL: {url}")
         print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Não fornecido")
         
-        resp = requests.get(url, headers=headers, timeout=30)
-        
-        print(f"   📊 Status Code: {resp.status_code}")
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            print(f"   📄 Resposta: {data}")
+        # Tentar cada endpoint até encontrar um que funcione
+        for i, url in enumerate(endpoints):
+            print(f"   🌐 Tentativa {i+1}: {url}")
             
-            # Tentar diferentes campos possíveis para o saldo
-            saldo = None
-            if 'balance' in data:
-                saldo = data.get("balance")
-            elif 'saldo' in data:
-                saldo = data.get("saldo")
-            elif 'amount' in data:
-                saldo = data.get("amount")
-            elif 'value' in data:
-                saldo = data.get("value")
-            else:
-                print(f"   ⚠️ Campo de saldo não encontrado. Campos disponíveis: {list(data.keys())}")
-                saldo = 0.0
-            
-            saldo_float = float(saldo) if saldo is not None else 0.0
-            print(f"   💰 Saldo encontrado: R$ {saldo_float:,.2f}")
-            return saldo_float
-        else:
-            print(f"   ❌ Erro HTTP {resp.status_code}")
-            print(f"   📄 Resposta de erro: {resp.text}")
-            return 0.0
+            try:
+                resp = requests.get(url, headers=headers, timeout=15)
+                print(f"   📊 Status Code: {resp.status_code}")
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    print(f"   📄 Resposta: {data}")
+                    
+                    # Tentar diferentes campos possíveis para o saldo
+                    saldo = None
+                    if 'balance' in data:
+                        saldo = data.get("balance")
+                    elif 'saldo' in data:
+                        saldo = data.get("saldo")
+                    elif 'amount' in data:
+                        saldo = data.get("amount")
+                    elif 'value' in data:
+                        saldo = data.get("value")
+                    elif 'credits' in data:
+                        saldo = data.get("credits")
+                    elif 'available_balance' in data:
+                        saldo = data.get("available_balance")
+                    else:
+                        print(f"   ⚠️ Campo de saldo não encontrado. Campos disponíveis: {list(data.keys())}")
+                        saldo = 0.0
+                    
+                    saldo_float = float(saldo) if saldo is not None else 0.0
+                    print(f"   ✅ Saldo encontrado: R$ {saldo_float:,.2f}")
+                    return saldo_float
+                else:
+                    print(f"   ❌ Erro HTTP {resp.status_code}: {resp.text}")
+                    
+            except requests.exceptions.Timeout:
+                print(f"   ⏰ Timeout na tentativa {i+1}")
+            except Exception as e:
+                print(f"   ❌ Erro na tentativa {i+1}: {e}")
+        
+        print(f"   ❌ Nenhum endpoint funcionou")
+        return 0.0
             
     except requests.exceptions.Timeout:
         print("   ❌ Timeout na requisição de saldo")
