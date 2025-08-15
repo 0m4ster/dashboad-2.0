@@ -130,8 +130,20 @@ def limpar_cpf(cpf):
     if not cpf:
         return ""
     
+    # Converter para string
+    cpf_str = str(cpf).strip()
+    
+    # Verificar se é notação científica (ex: 1.20225E+17)
+    if 'E' in cpf_str.upper() or 'e' in cpf_str:
+        try:
+            # Converter notação científica para número inteiro
+            numero = float(cpf_str)
+            cpf_str = str(int(numero))
+        except (ValueError, OverflowError):
+            return ""
+    
     # Remove caracteres não numéricos
-    cpf_limpo = re.sub(r'\D', '', str(cpf))
+    cpf_limpo = re.sub(r'\D', '', cpf_str)
     
     # Se tem exatamente 11 dígitos, retorna como está
     if len(cpf_limpo) == 11:
@@ -263,6 +275,8 @@ def extrair_cpfs_kolmeya(messages):
     """Extrai e limpa todos os CPFs das mensagens do Kolmeya."""
     cpfs = set()
     
+    print(f"🔍 DEBUG - Extraindo CPFs do Kolmeya de {len(messages) if messages else 0} mensagens")
+    
     for msg in messages:
         if isinstance(msg, dict):
             # Campo 'cpf' da nova API
@@ -272,8 +286,11 @@ def extrair_cpfs_kolmeya(messages):
                 # Usar a nova função de limpeza de CPF
                 cpf_limpo = limpar_cpf(valor_str)
                 if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                        cpfs.add(cpf_limpo)
+                    cpfs.add(cpf_limpo)
+                    if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                        print(f"   ✅ CPF extraído: {cpf_limpo}")
     
+    print(f"🔍 DEBUG - Total de CPFs extraídos do Kolmeya: {len(cpfs)}")
     return cpfs
 
 def extrair_cpfs_da_base(df, data_ini=None, data_fim=None):
@@ -685,6 +702,132 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
         print(f"❌ Erro inesperado: {e}")
         return []
 
+def consultar_acessos_sms_kolmeya(start_at, end_at, limit=5000, token=None, tenant_segment_id=None):
+    """
+    Consulta os acessos realizados nas mensagens SMS enviadas via API do Kolmeya
+    """
+    if token is None:
+        token = get_kolmeya_token()
+    
+    if not token:
+        print("❌ Token do Kolmeya não encontrado")
+        return []
+    
+    # Para acessos, usar formato de data simples (YYYY-MM-DD)
+    # Não validar período pois a API de acessos aceita períodos maiores
+    
+    url = "https://kolmeya.com.br/api/v1/sms/accesses"
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Preparar dados da requisição
+    data = {
+        "tenant_segment_id": 0,  # Padrão conforme documentação
+        "start_at": start_at,
+        "end_at": end_at,
+        "limit": min(limit, 5000),  # Máximo permitido pela API
+        "is_robot": 0  # Excluir acessos de robôs
+    }
+    
+    # Sobrescrever tenant_segment_id se fornecido
+    if tenant_segment_id is not None:
+        data["tenant_segment_id"] = tenant_segment_id
+    
+    print(f"🔍 DEBUG - Consultando Kolmeya SMS Acessos:")
+    print(f"   🌐 URL: {url}")
+    print(f"   📅 Período: {start_at} até {end_at}")
+    print(f"   🔑 Token: {token[:10]}...")
+    print(f"   📋 Request Body: {data}")
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # A API retorna uma lista de dicionários, cada um com 'accesses' e 'totalAccesses'
+        # Precisamos extrair todos os acessos de todos os dicionários
+        all_accesses = []
+        total_accesses = 0
+        
+        if isinstance(data, list):
+            # Se é uma lista, processar cada item
+            for item in data:
+                if isinstance(item, dict) and "accesses" in item:
+                    item_accesses = item["accesses"]
+                    if item_accesses:
+                        all_accesses.extend(item_accesses)
+                        total_accesses += item.get("totalAccesses", len(item_accesses))
+        elif isinstance(data, dict) and "accesses" in data:
+            # Se é um dicionário único
+            all_accesses = data["accesses"]
+            total_accesses = data.get("totalAccesses", len(all_accesses))
+        
+        if all_accesses:
+            print(f"✅ Kolmeya SMS Acessos - {len(all_accesses)} acessos encontrados (Total: {total_accesses})")
+            
+            # Debug do primeiro acesso
+            primeiro_acesso = all_accesses[0]
+            print(f"🔍 DEBUG - Estrutura do primeiro acesso:")
+            print(f"   📋 Campos disponíveis: {list(primeiro_acesso.keys())}")
+            print(f"   🆔 CPF: {primeiro_acesso.get('cpf', 'N/A')}")
+            print(f"   👤 Nome: {primeiro_acesso.get('name', 'N/A')}")
+            print(f"   📱 Telefone: {primeiro_acesso.get('fullphone', 'N/A')}")
+            print(f"   💬 Mensagem: {primeiro_acesso.get('message', 'N/A')[:50]}...")
+            print(f"   🤖 É robô: {primeiro_acesso.get('is_robot', 'N/A')}")
+            print(f"   📅 Acessado em: {primeiro_acesso.get('accessed_at', 'N/A')}")
+            
+            accesses = all_accesses
+        else:
+            print(f"⚠️ Kolmeya SMS Acessos - Nenhum acesso encontrado")
+            print(f"   📋 Response completo: {data}")
+            accesses = []
+        
+        return accesses
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Erro na requisição Kolmeya SMS Acessos: {e}")
+        return []
+    except Exception as e:
+        print(f"❌ Erro inesperado na consulta Kolmeya SMS Acessos: {e}")
+        return []
+
+def extrair_cpfs_acessos_kolmeya(accesses):
+    """Extrai CPFs únicos dos acessos do Kolmeya."""
+    cpfs = set()
+    
+    if not accesses:
+        return cpfs
+    
+    print(f"🔍 DEBUG - Extraindo CPFs dos acessos do Kolmeya de {len(accesses)} acessos")
+    
+    for acesso in accesses:
+        if isinstance(acesso, dict):
+            # Extrair CPF do campo 'cpf'
+            cpf = acesso.get('cpf')
+            if cpf:
+                # Limpar e validar CPF
+                cpf_limpo = limpar_cpf(str(cpf))
+                if validar_cpf(cpf_limpo):
+                    cpfs.add(cpf_limpo)
+                    if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                        print(f"   ✅ CPF de acesso extraído: {cpf_limpo}")
+                else:
+                    if len(cpfs) <= 3:  # Mostrar apenas os primeiros 3 para debug
+                        print(f"   ❌ CPF de acesso inválido: {cpf}")
+            else:
+                if len(cpfs) <= 3:  # Mostrar apenas os primeiros 3 para debug
+                    print(f"   ⚠️ Acesso sem campo 'cpf': {acesso.get('name', 'N/A')}")
+    
+    print(f"🔍 DEBUG - Total de CPFs únicos de acessos extraídos: {len(cpfs)}")
+    if cpfs:
+        print(f"   📋 Primeiros 5 CPFs de acessos: {list(cpfs)[:5]}")
+    
+    return cpfs
+
 @st.cache_data(ttl=600)
 def ler_base(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -779,6 +922,12 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
             colunas_data.append(col)
     
     # Conta registros com valor "URA"
+    print(f"🔍 DEBUG - Extraindo URA da base:")
+    print(f"   📊 Total de registros na base: {len(df)}")
+    print(f"   📅 Filtro de data: {data_ini} a {data_fim}")
+    print(f"   📋 Colunas de data encontradas: {colunas_data}")
+    print(f"   📋 Colunas UTM encontradas: {colunas_utm}")
+    
     for idx, row in df.iterrows():
         # Verifica se tem UTM source = "URA"
         tem_ura = False
@@ -912,6 +1061,12 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                     if cpf_encontrado:
                         ura_cpfs_por_status['Outros'].add(cpf_encontrado)
     
+    # Log final dos resultados
+    print(f"🔍 DEBUG - Resultados da extração URA:")
+    print(f"   📊 Total de registros URA encontrados: {ura_count}")
+    print(f"   📋 Distribuição por status: {ura_por_status}")
+    print(f"   📋 CPFs únicos por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
+    
     return ura_count, ura_por_status, ura_cpfs_por_status
 
 def filtrar_mensagens_por_data(messages, data_ini, data_fim):
@@ -982,7 +1137,7 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         "Accept": "application/json"
     }
     
-    # Parâmetros da consulta
+    # Parâmetros da consulta conforme documentação da Facta
     params = {
         "cpf": cpf,
         "convenio": 3,  # FACTA FINANCEIRA
@@ -990,7 +1145,7 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         "pagina": 1
     }
     
-    # Adicionar filtros de data se fornecidos
+    # Adicionar filtros de data se fornecidos (formato DD/MM/AAAA)
     if data_ini:
         params["data_ini"] = data_ini.strftime('%d/%m/%Y')
     if data_fim:
@@ -1002,17 +1157,31 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
         print(f"   🔑 Token: {token[:10]}..." if token else "   🔑 Token: Não fornecido")
         print(f"   📋 Parâmetros: {params}")
         
-        resp = requests.get(url, headers=headers, params=params, timeout=15)  # Aumentado timeout
+        resp = requests.get(url, headers=headers, params=params, timeout=30)  # Aumentado timeout
         
         print(f"   📊 Status Code: {resp.status_code}")
         
         if resp.status_code == 200:
             data = resp.json()
-            print(f"   📄 Resposta: {data}")
+            print(f"   📄 Resposta completa: {data}")
             
-            if not data.get("erro", True):
+            # Verificar se há erro na resposta
+            if data.get("erro") == False:  # Corrigido: verificar se erro é False
                 propostas = data.get("propostas", [])
                 print(f"   ✅ Encontradas {len(propostas)} propostas para CPF {cpf}")
+                
+                # Debug: Verificar estrutura das propostas
+                if propostas and len(propostas) > 0:
+                    primeira_proposta = propostas[0]
+                    print(f"   🔍 Estrutura da primeira proposta:")
+                    print(f"      📋 Campos disponíveis: {list(primeira_proposta.keys())}")
+                    print(f"      💰 Valor AF: {primeira_proposta.get('valor_af', 'N/A')}")
+                    print(f"      💰 Valor Bruto: {primeira_proposta.get('valor_bruto', 'N/A')}")
+                    print(f"      📊 Status: {primeira_proposta.get('status_proposta', 'N/A')}")
+                    print(f"      🏷️ Produto: {primeira_proposta.get('produto', 'N/A')}")
+                    print(f"      👤 Cliente: {primeira_proposta.get('cliente', 'N/A')}")
+                    print(f"      📅 Data Movimento: {primeira_proposta.get('data_movimento', 'N/A')}")
+                
                 return propostas
             else:
                 print(f"   ❌ Erro na resposta da Facta para CPF {cpf}: {data.get('mensagem', 'Erro desconhecido')}")
@@ -1042,11 +1211,10 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
         print(f"   ⚠️ Lista de CPFs vazia")
         return {}
     
-    # Limitar o número de CPFs para evitar sobrecarga
-    cpfs_limitados = list(cpfs)[:50]  # Reduzido para 50 CPFs por consulta
+    # Processar TODOS os CPFs encontrados (sem limitação)
+    cpfs_limitados = list(cpfs)  # Removida limitação - processar todos
     
-    if len(cpfs) > 50:
-        print(f"⚠️ Limitando consulta a 50 CPFs (de {len(cpfs)} total)")
+    print(f"🚀 Processando TODOS os {len(cpfs_limitados)} CPFs encontrados")
     
     print(f"🚀 Iniciando consulta Facta para {len(cpfs_limitados)} CPFs...")
     inicio = time.time()
@@ -1061,15 +1229,15 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
         
         if chave_cache in facta_cache:
             resultados[cpf] = facta_cache[chave_cache]
+            print(f"   💾 Cache hit para CPF {cpf}")
         else:
             cpfs_para_consultar.append(cpf)
     
     print(f"🔍 CPFs para consultar: {len(cpfs_para_consultar)} (cache: {len(cpfs_limitados) - len(cpfs_para_consultar)})")
     
     if cpfs_para_consultar:
-        # Simplificar: consultar apenas os primeiros 5 CPFs para teste
-        cpfs_teste = cpfs_para_consultar[:5]
-        print(f"🧪 Testando com primeiros 5 CPFs: {cpfs_teste}")
+        # Processar todos os CPFs pendentes (não apenas 5)
+        print(f"🔍 Processando {len(cpfs_para_consultar)} CPFs pendentes...")
         
         cpfs_processados = 0
         
@@ -1077,32 +1245,76 @@ def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=Non
             try:
                 print(f"🔍 Consultando CPF: {cpf}")
                 propostas = consultar_facta_por_cpf(cpf, token, data_ini, data_fim)
-                print(f"✅ CPF {cpf}: {len(propostas) if propostas else 0} propostas")
+                
+                # Debug: Verificar se há propostas com valores
+                if propostas:
+                    total_valor = 0.0
+                    for proposta in propostas:
+                        valor_af = proposta.get('valor_af', 0)
+                        if valor_af:
+                            try:
+                                valor_float = float(str(valor_af).replace(',', '.'))
+                                total_valor += valor_float
+                            except (ValueError, TypeError):
+                                pass
+                    print(f"✅ CPF {cpf}: {len(propostas)} propostas, Valor total: R$ {total_valor:,.2f}")
+                else:
+                    print(f"✅ CPF {cpf}: 0 propostas")
+                
                 return cpf, propostas
             except Exception as e:
                 print(f"❌ Erro no CPF {cpf}: {e}")
                 return cpf, []
         
-        # Processar CPFs de teste
-        for cpf in cpfs_teste:
-            cpf_result, propostas = consultar_cpf(cpf)
-            resultados[cpf_result] = propostas
+        # Processar CPFs em lotes para evitar sobrecarga
+        lote_size = 50  # Aumentado para processar mais CPFs por lote
+        total_lotes = (len(cpfs_para_consultar) + lote_size - 1) // lote_size
+        print(f"   📦 Processando {total_lotes} lotes de {lote_size} CPFs cada")
+        for i in range(0, len(cpfs_para_consultar), lote_size):
+            lote = cpfs_para_consultar[i:i+lote_size]
+            lote_atual = i//lote_size + 1
+            print(f"   📦 Processando lote {lote_atual}/{total_lotes}: {len(lote)} CPFs")
             
-            # Salvar no cache
-            chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
-            facta_cache[chave_cache] = propostas
-            
-            cpfs_processados += 1
+            for cpf in lote:
+                cpf_result, propostas = consultar_cpf(cpf)
+                resultados[cpf_result] = propostas
+                
+                # Salvar no cache
+                chave_cache = f"{cpf_result}_{data_ini}_{data_fim}" if data_ini and data_fim else cpf_result
+                facta_cache[chave_cache] = propostas
+                
+                cpfs_processados += 1
+                
+                # Mostrar progresso a cada 10 CPFs processados
+                if cpfs_processados % 10 == 0:
+                    print(f"   📊 Progresso: {cpfs_processados}/{len(cpfs_para_consultar)} CPFs processados")
+                
+                # Pequena pausa entre consultas para evitar rate limiting
+                time.sleep(0.03)  # Reduzido para acelerar processamento
     else:
         print(f"✅ Usando cache para todos os {len(cpfs_limitados)} CPFs")
     
     tempo_total = time.time() - inicio
     cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
     
+    # Calcular valor total de todas as propostas
+    valor_total_todas_propostas = 0.0
+    for cpf, propostas in resultados.items():
+        if propostas:
+            for proposta in propostas:
+                valor_af = proposta.get('valor_af', 0)
+                if valor_af:
+                    try:
+                        valor_float = float(str(valor_af).replace(',', '.'))
+                        valor_total_todas_propostas += valor_float
+                    except (ValueError, TypeError):
+                        pass
+    
     print(f"✅ Consulta Facta concluída em {tempo_total:.1f}s:")
     print(f"   📊 CPFs processados: {len(resultados)}")
     print(f"   ✅ CPFs com propostas: {cpfs_com_resultado}")
     print(f"   ❌ CPFs sem propostas: {len(resultados) - cpfs_com_resultado}")
+    print(f"   💰 Valor total de todas as propostas: R$ {valor_total_todas_propostas:,.2f}")
     print(f"   💾 Cache atual: {len(facta_cache)} entradas")
     
     return resultados
@@ -1127,7 +1339,9 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
             'propostas_por_averbador': {},
             'propostas_por_corretor': {},
             'propostas_por_tipo_operacao': {},
-            'taxa_conversao': 0.0
+            'taxa_conversao': 0.0,
+            'cpfs_com_valores': [],
+            'resumo_por_cpf': {}
         }
     
     total_cpfs = len(propostas_dict)
@@ -1140,39 +1354,91 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
     propostas_por_corretor = {}
     propostas_por_tipo_operacao = {}
     valor_total = 0.0
+    cpfs_com_valores = []
+    resumo_por_cpf = {}
+    
+    print(f"🔍 DEBUG - Processando {total_cpfs} CPFs...")
     
     for cpf, propostas in propostas_dict.items():
+        print(f"   🔍 Processando CPF: {cpf}")
+        print(f"      📋 Propostas recebidas: {len(propostas) if propostas else 0}")
+        
         # Filtrar propostas baseado no filtro selecionado
         propostas_validas = []
-        for proposta in propostas:
-            status = proposta.get('status_proposta', '')
-            
-            # Definir status válidos baseado no filtro
-            if filtro_status == "contrato_pago":
-                status_validos = ['16 - CONTRATO PAGO']
-            elif filtro_status == "validos":
-                status_validos = [
-                    '16 - CONTRATO PAGO',
-                    '28 - CANCELADO',  # Pode ter sido pago antes de cancelar
-                    '15 - CONTRATO ASSINADO',
-                    '14 - PROPOSTA APROVADA',
-                    '13 - PROPOSTA EM ANÁLISE',
-                    '12 - PROPOSTA ENVIADA',
-                    '11 - PROPOSTA CRIADA'
-                ]
-            else:  # "todos"
-                status_validos = None  # Incluir todos os status
-            
-            # Verificar se deve incluir a proposta
-            if status_validos is None or status in status_validos:
-                propostas_validas.append(proposta)
-                print(f"   ✅ Proposta incluída - CPF: {cpf}, Status: {status}, Valor: {proposta.get('valor_af', 0)}")
-            else:
-                print(f"   ❌ Proposta excluída - CPF: {cpf}, Status: {status}")
+        valor_cpf = 0.0
+        
+        if propostas:
+            for proposta in propostas:
+                status = proposta.get('status_proposta', '')
+                valor_af = proposta.get('valor_af', 0)
+                valor_bruto = proposta.get('valor_bruto', 0)
+                
+                print(f"      📊 Proposta - Status: {status}, Valor AF: {valor_af}, Valor Bruto: {valor_bruto}")
+                
+                # Definir status válidos baseado no filtro
+                if filtro_status == "contrato_pago":
+                    status_validos = ['16 - CONTRATO PAGO']
+                elif filtro_status == "validos":
+                    status_validos = [
+                        '16 - CONTRATO PAGO',
+                        '28 - CANCELADO',  # Pode ter sido pago antes de cancelar
+                        '15 - CONTRATO ASSINADO',
+                        '14 - PROPOSTA APROVADA',
+                        '13 - PROPOSTA EM ANÁLISE',
+                        '12 - PROPOSTA ENVIADA',
+                        '11 - PROPOSTA CRIADA'
+                    ]
+                else:  # "todos"
+                    status_validos = None  # Incluir todos os status
+                
+                # Verificar se deve incluir a proposta
+                if status_validos is None or status in status_validos:
+                    propostas_validas.append(proposta)
+                    
+                    # Converter e somar valor_af
+                    try:
+                        if valor_af is not None and str(valor_af).strip():
+                            # Tratar diferentes formatos de valor
+                            valor_str = str(valor_af).strip()
+                            
+                            # Se for string vazia ou '0', pular
+                            if valor_str == '' or valor_str == '0' or valor_str == '0.0':
+                                print(f"      ⚠️ Proposta com valor AF zero ou vazio: {valor_af}")
+                                continue
+                            
+                            # Converter para float
+                            valor_float = float(valor_str.replace(',', '.'))
+                            
+                            # Só incluir se o valor for maior que zero
+                            if valor_float > 0:
+                                valor_cpf += valor_float
+                                print(f"      ✅ Proposta incluída - Status: {status}, Valor AF: R$ {valor_float:,.2f}")
+                            else:
+                                print(f"      ⚠️ Proposta com valor AF zero: {valor_af}")
+                        else:
+                            print(f"      ⚠️ Proposta sem valor AF válido: {valor_af}")
+                    except (ValueError, TypeError) as e:
+                        print(f"      ❌ Erro ao converter valor AF '{valor_af}': {e}")
+                else:
+                    print(f"      ❌ Proposta excluída - Status: {status}")
         
         if propostas_validas:
             cpfs_com_propostas += 1
             total_propostas += len(propostas_validas)
+            
+            # Adicionar CPF à lista de CPFs com valores
+            if valor_cpf > 0:
+                cpfs_com_valores.append(cpf)
+                resumo_por_cpf[cpf] = {
+                    'propostas': len(propostas_validas),
+                    'valor_total': valor_cpf,
+                    'status_propostas': [p.get('status_proposta', 'Sem Status') for p in propostas_validas]
+                }
+            
+            # Somar ao valor total
+            valor_total += valor_cpf
+            
+            print(f"      💰 Valor total do CPF {cpf}: R$ {valor_cpf:,.2f}")
             
             for proposta in propostas_validas:
                 # Contar por status
@@ -1194,21 +1460,28 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
                 # Contar por tipo de operação
                 tipo_operacao = proposta.get('tipo_operacao', 'Sem Tipo')
                 propostas_por_tipo_operacao[tipo_operacao] = propostas_por_tipo_operacao.get(tipo_operacao, 0) + 1
-                
-                # Somar valores - usar valor_af em vez de valor_bruto
-                valor_af = float(proposta.get('valor_af', 0))
-                valor_total += valor_af
         else:
             cpfs_sem_propostas += 1
+            print(f"      ❌ CPF {cpf} sem propostas válidas")
     
-    print(f"🔍 DEBUG - Análise Facta (status válidos incluindo CANCELADO):")
+    print(f"🔍 DEBUG - Análise Facta concluída:")
     print(f"   📊 Total CPFs consultados: {total_cpfs}")
     print(f"   ✅ CPFs com propostas válidas: {cpfs_com_propostas}")
     print(f"   ❌ CPFs sem propostas válidas: {cpfs_sem_propostas}")
     print(f"   💰 Total de propostas válidas: {total_propostas}")
     print(f"   💰 Valor total (valor_af): R$ {valor_total:,.2f}")
-    print(f"   📋 Campo usado: 'valor_af' (não 'valor_bruto')")
+    print(f"   📋 CPFs com valores: {len(cpfs_com_valores)}")
+    print(f"   📋 Campo usado: 'valor_af'")
     print(f"   📋 Status incluídos: CONTRATO PAGO, CANCELADO, ASSINADO, APROVADA, etc.")
+    
+    # Mostrar resumo dos CPFs com valores
+    if cpfs_com_valores:
+        print(f"   📋 Resumo dos CPFs com valores:")
+        for cpf in cpfs_com_valores[:5]:  # Mostrar apenas os primeiros 5
+            resumo = resumo_por_cpf[cpf]
+            print(f"      CPF {cpf}: {resumo['propostas']} propostas, R$ {resumo['valor_total']:,.2f}")
+        if len(cpfs_com_valores) > 5:
+            print(f"      ... e mais {len(cpfs_com_valores) - 5} CPFs")
     
     return {
         'total_cpfs_consultados': total_cpfs,
@@ -1222,7 +1495,9 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
         'propostas_por_averbador': propostas_por_averbador,
         'propostas_por_corretor': propostas_por_corretor,
         'propostas_por_tipo_operacao': propostas_por_tipo_operacao,
-        'taxa_conversao': (cpfs_com_propostas / total_cpfs * 100) if total_cpfs > 0 else 0.0
+        'taxa_conversao': (cpfs_com_propostas / total_cpfs * 100) if total_cpfs > 0 else 0.0,
+        'cpfs_com_valores': cpfs_com_valores,
+        'resumo_por_cpf': resumo_por_cpf
     }
 
 def obter_cpfs_fgts_4net_kolmeya(uploaded_file, data_ini, data_fim, messages):
@@ -1256,6 +1531,10 @@ def obter_cpfs_fgts_4net_kolmeya(uploaded_file, data_ini, data_fim, messages):
 
 def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
     """Extrai e conta registros com UTM source = 'WHATSAPP_MKT' da base carregada, separados por status e opcionalmente filtrados por data."""
+    print(f"🔍 DEBUG - INICIANDO extrair_whatsapp_da_base")
+    print(f"   📊 DataFrame shape: {df.shape if df is not None else 'None'}")
+    print(f"   📋 Colunas disponíveis: {list(df.columns) if df is not None else 'None'}")
+    
     whatsapp_count = 0
     whatsapp_por_status = {
         'Novo': 0,
@@ -1272,6 +1551,7 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
     
     # Verifica se há dados válidos na base
     if df is None or df.empty:
+        print(f"   ⚠️ DataFrame vazio ou None")
         return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
     
     # Procura por colunas que podem conter UTM source
@@ -1295,7 +1575,11 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
     
     # Se não encontrou nenhuma coluna UTM, retorna zeros
     if not colunas_utm:
+        print(f"   ❌ NENHUMA coluna UTM encontrada!")
+        print(f"   📋 Todas as colunas: {list(df.columns)}")
         return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+    else:
+        print(f"   ✅ Colunas UTM encontradas: {colunas_utm}")
     
     # Procura por colunas que podem conter CPFs
     colunas_cpf = []
@@ -1329,6 +1613,28 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
             colunas_data.append(col)
     
     # Conta registros com valor "WHATSAPP_MKT"
+    print(f"🔍 DEBUG - Extraindo WhatsApp da base:")
+    print(f"   📊 Total de registros na base: {len(df)}")
+    print(f"   📅 Filtro de data: {data_ini} a {data_fim}")
+    print(f"   📋 Colunas de data encontradas: {colunas_data}")
+    print(f"   📋 Colunas UTM encontradas: {colunas_utm}")
+    
+    # Debug: Verificar alguns valores da coluna UTM
+    if colunas_utm:
+        print(f"🔍 DEBUG - Verificando valores na coluna UTM '{colunas_utm[0]}':")
+        valores_unicos = df[colunas_utm[0]].dropna().unique()
+        print(f"   📋 Valores únicos encontrados: {valores_unicos[:10]}")  # Primeiros 10 valores
+        
+        # Verificar especificamente por "WHATSAPP_MKT"
+        registros_whatsapp = df[df[colunas_utm[0]].str.upper() == "WHATSAPP_MKT"]
+        print(f"   📊 Registros com 'WHATSAPP_MKT' encontrados: {len(registros_whatsapp)}")
+        if len(registros_whatsapp) > 0:
+            print(f"   📋 Primeiros registros WhatsApp:")
+            for idx, row in registros_whatsapp.head(3).iterrows():
+                print(f"      Linha {idx}: {row[colunas_utm[0]]}")
+    else:
+        print(f"   ❌ Nenhuma coluna UTM encontrada!")
+    
     for idx, row in df.iterrows():
         # Verifica se tem UTM source = "WHATSAPP_MKT"
         tem_whatsapp = False
@@ -1338,16 +1644,25 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
                 valor_str = str(valor).strip().upper()
                 if valor_str == "WHATSAPP_MKT":
                     tem_whatsapp = True
+                    if whatsapp_count < 5:  # Mostrar apenas os primeiros 5 para debug
+                        print(f"   ✅ Registro WhatsApp encontrado na linha {idx}, coluna '{col}': '{valor}'")
                     break
         
         if tem_whatsapp:
             # Se há filtro de data, verifica se está no período
             if data_ini and data_fim and colunas_data:
                 data_valida = False
+                if whatsapp_count < 3:  # Debug para os primeiros registros
+                    print(f"   🔍 DEBUG - Verificando filtro de data para registro WhatsApp linha {idx}")
+                    print(f"      📅 Filtro: {data_ini} a {data_fim}")
+                
                 for col in colunas_data:
                     try:
                         data_str = str(row[col])
                         if pd.notna(data_str) and data_str.strip():
+                            if whatsapp_count < 3:
+                                print(f"      📋 Coluna '{col}': '{data_str}'")
+                            
                             # Tenta diferentes formatos de data
                             data_criacao = None
                             
@@ -1367,105 +1682,96 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
                             if data_criacao:
                                 data_ini_dt = datetime.combine(data_ini, datetime.min.time())
                                 data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                                
+                                if whatsapp_count < 3:
+                                    print(f"      📅 Data parseada: {data_criacao}")
+                                    print(f"      📅 Range filtro: {data_ini_dt} a {data_fim_dt}")
+                                    print(f"      ✅ Data válida: {data_ini_dt <= data_criacao <= data_fim_dt}")
+                                
                                 if data_ini_dt <= data_criacao <= data_fim_dt:
                                     data_valida = True
                                     break
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as e:
+                        if whatsapp_count < 3:
+                            print(f"      ❌ Erro ao parsear data '{data_str}': {e}")
                         continue
                 
                 # Se não há filtro de data ou se a data está no período, conta o registro
                 if data_valida:
                     whatsapp_count += 1
-                    # Extrai CPF do registro
-                    cpf_encontrado = None
-                    for col in colunas_cpf:
-                        valor_cpf = row[col] if col in row else None
-                        if valor_cpf is not None:
-                            valor_cpf_str = str(valor_cpf).strip()
-                            # Usar a nova função de limpeza de CPF
-                            cpf_limpo = limpar_cpf(valor_cpf_str)
-                            if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                        cpf_encontrado = cpf_limpo
-                                        break
-                    
-                    # Categoriza por status
-                    status_encontrado = False
-                    for col in colunas_status:
-                        valor_status = row[col] if col in row else None
-                        if valor_status is not None:
-                            valor_status_str = str(valor_status).strip().upper()
-                            if valor_status_str.startswith('INSS'):
-                                whatsapp_por_status['Novo'] += 1
-                                if cpf_encontrado:
-                                    whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                            elif valor_status_str.startswith('FGTS'):
-                                whatsapp_por_status['FGTS'] += 1
-                                if cpf_encontrado:
-                                    whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                            elif valor_status_str.startswith('CLT'):
-                                whatsapp_por_status['CLT'] += 1
-                                if cpf_encontrado:
-                                    whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                    
-                    if not status_encontrado:
-                        whatsapp_por_status['Outros'] += 1
-                        if cpf_encontrado:
-                            whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
+                    if whatsapp_count <= 3:
+                        print(f"      ✅ Registro WhatsApp ACEITO pelo filtro de data (Total: {whatsapp_count})")
+                else:
+                    if whatsapp_count < 3:
+                        print(f"      ❌ Registro WhatsApp REJEITADO pelo filtro de data")
+                    continue  # Pula para o próximo registro se a data não for válida
             else:
-                # Se não há filtro de data, conta todos os registros WHATSAPP_MKT
+                # Se não há filtro de data, conta o registro
                 whatsapp_count += 1
-                # Extrai CPF do registro
-                cpf_encontrado = None
-                for col in colunas_cpf:
-                    valor_cpf = row[col] if col in row else None
-                    if valor_cpf is not None:
-                        valor_cpf_str = str(valor_cpf).strip()
-                        # Usar a nova função de limpeza de CPF
-                        cpf_limpo = limpar_cpf(valor_cpf_str)
-                        if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                cpf_encontrado = cpf_limpo
-                                break
-                
-                # Categoriza por status
-                status_encontrado = False
-                for col in colunas_status:
-                    valor_status = row[col] if col in row else None
-                    if valor_status is not None:
-                        valor_status_str = str(valor_status).strip().upper()
-                        if valor_status_str.startswith('INSS'):
-                            whatsapp_por_status['Novo'] += 1
-                            if cpf_encontrado:
-                                whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
-                            status_encontrado = True
-                            break
-                        elif valor_status_str.startswith('FGTS'):
-                            whatsapp_por_status['FGTS'] += 1
-                            if cpf_encontrado:
-                                whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
-                            status_encontrado = True
-                            break
-                        elif valor_status_str.startswith('CLT'):
-                            whatsapp_por_status['CLT'] += 1
-                            if cpf_encontrado:
-                                whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
-                            status_encontrado = True
-                            break
-                
-                if not status_encontrado:
-                    whatsapp_por_status['Outros'] += 1
-                    if cpf_encontrado:
-                        whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
+                if whatsapp_count <= 3:
+                    print(f"      ✅ Registro WhatsApp ACEITO (sem filtro de data) (Total: {whatsapp_count})")
+            
+            # Extrai CPF do registro (apenas se o registro foi aceito)
+            cpf_encontrado = None
+            for col in colunas_cpf:
+                valor_cpf = row[col] if col in row else None
+                if valor_cpf is not None:
+                    valor_cpf_str = str(valor_cpf).strip()
+                    # Usar a nova função de limpeza de CPF
+                    cpf_limpo = limpar_cpf(valor_cpf_str)
+                    if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                        cpf_encontrado = cpf_limpo
+                        if whatsapp_count <= 5:  # Mostrar apenas os primeiros 5 para debug
+                            print(f"      ✅ CPF encontrado na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
+                        break
+                    elif whatsapp_count <= 3:  # Mostrar apenas os primeiros 3 para debug
+                        print(f"      ⚠️ CPF inválido na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
+            
+            # Categoriza por status
+            status_encontrado = False
+            for col in colunas_status:
+                valor_status = row[col] if col in row else None
+                if valor_status is not None:
+                    valor_status_str = str(valor_status).strip().upper()
+                    if valor_status_str.startswith('INSS'):
+                        whatsapp_por_status['Novo'] += 1
+                        if cpf_encontrado:
+                            whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
+                        status_encontrado = True
+                        break
+                    elif valor_status_str.startswith('FGTS'):
+                        whatsapp_por_status['FGTS'] += 1
+                        if cpf_encontrado:
+                            whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                        status_encontrado = True
+                        break
+                    elif valor_status_str.startswith('CLT'):
+                        whatsapp_por_status['CLT'] += 1
+                        if cpf_encontrado:
+                            whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
+                        status_encontrado = True
+                        break
+             
+            if not status_encontrado:
+                whatsapp_por_status['Outros'] += 1
+                if cpf_encontrado:
+                    whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
     
+    # Log final dos resultados
+    print(f"🔍 DEBUG - Resultados da extração WhatsApp:")
+    print(f"   📊 Total de registros WhatsApp encontrados: {whatsapp_count}")
+    print(f"   📋 Distribuição por status: {whatsapp_por_status}")
+    print(f"   📋 CPFs únicos por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+    
+    print(f"🔍 DEBUG - FUNÇÃO extrair_whatsapp_da_base CONCLUÍDA")
     return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
 
 def extrair_ad_da_base(df, data_ini=None, data_fim=None):
     """Extrai e conta registros com UTM source = 'ad' da base carregada, separados por status e opcionalmente filtrados por data."""
+    print(f"🔍 DEBUG - INICIANDO extrair_ad_da_base")
+    print(f"   📊 DataFrame shape: {df.shape if df is not None else 'None'}")
+    print(f"   📋 Colunas disponíveis: {list(df.columns) if df is not None else 'None'}")
+    
     ad_count = 0
     ad_por_status = {
         'Novo': 0,
@@ -1482,6 +1788,7 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
     
     # Verifica se há dados válidos na base
     if df is None or df.empty:
+        print(f"   ⚠️ DataFrame vazio ou None")
         return ad_count, ad_por_status, ad_cpfs_por_status
     
     # Procura por colunas que podem conter UTM source
@@ -1505,7 +1812,11 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
     
     # Se não encontrou nenhuma coluna UTM, retorna zeros
     if not colunas_utm:
+        print(f"   ❌ NENHUMA coluna UTM encontrada!")
+        print(f"   📋 Todas as colunas: {list(df.columns)}")
         return ad_count, ad_por_status, ad_cpfs_por_status
+    else:
+        print(f"   ✅ Colunas UTM encontradas: {colunas_utm}")  
     
     # Procura por colunas que podem conter CPFs
     colunas_cpf = []
@@ -1538,9 +1849,31 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
         if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
             colunas_data.append(col)
     
-    # Conta registros com valor "ad"
+    # Conta registros com valor "ad" (minúsculo)
+    print(f"🔍 DEBUG - Extraindo AD da base:")
+    print(f"   📊 Total de registros na base: {len(df)}")
+    print(f"   📅 Filtro de data: {data_ini} a {data_fim}")
+    print(f"   📋 Colunas de data encontradas: {colunas_data}")
+    print(f"   📋 Colunas UTM encontradas: {colunas_utm}")
+    
+    # Debug: Verificar alguns valores da coluna UTM
+    if colunas_utm:
+        print(f"🔍 DEBUG - Verificando valores na coluna UTM '{colunas_utm[0]}':")
+        valores_unicos = df[colunas_utm[0]].dropna().unique()
+        print(f"   📋 Valores únicos encontrados: {valores_unicos[:10]}")  # Primeiros 10 valores
+        
+        # Verificar especificamente por "ad"
+        registros_ad = df[df[colunas_utm[0]].str.lower() == "ad"]
+        print(f"   📊 Registros com 'ad' encontrados: {len(registros_ad)}")
+        if len(registros_ad) > 0:
+            print(f"   📋 Primeiros registros AD:")
+            for idx, row in registros_ad.head(3).iterrows():
+                print(f"      Linha {idx}: {row[colunas_utm[0]]}")
+    else:
+        print(f"   ❌ Nenhuma coluna UTM encontrada!")
+    
     for idx, row in df.iterrows():
-        # Verifica se tem UTM source = "ad"
+        # Verifica se tem UTM source = "ad" (minúsculo conforme dados)
         tem_ad = False
         for col in colunas_utm:
             valor = row[col] if col in row else None
@@ -1548,16 +1881,25 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
                 valor_str = str(valor).strip().lower()
                 if valor_str == "ad":
                     tem_ad = True
+                    if ad_count < 5:  # Mostrar apenas os primeiros 5 para debug
+                        print(f"   ✅ Registro AD encontrado na linha {idx}, coluna '{col}': '{valor}'")
                     break
         
         if tem_ad:
             # Se há filtro de data, verifica se está no período
             if data_ini and data_fim and colunas_data:
                 data_valida = False
+                if ad_count < 3:  # Debug para os primeiros registros
+                    print(f"   🔍 DEBUG - Verificando filtro de data para registro AD linha {idx}")
+                    print(f"      📅 Filtro: {data_ini} a {data_fim}")
+                
                 for col in colunas_data:
                     try:
                         data_str = str(row[col])
                         if pd.notna(data_str) and data_str.strip():
+                            if ad_count < 3:
+                                print(f"      📋 Coluna '{col}': '{data_str}'")
+                            
                             # Tenta diferentes formatos de data
                             data_criacao = None
                             
@@ -1577,101 +1919,88 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
                             if data_criacao:
                                 data_ini_dt = datetime.combine(data_ini, datetime.min.time())
                                 data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                                
+                                if ad_count < 3:
+                                    print(f"      📅 Data parseada: {data_criacao}")
+                                    print(f"      📅 Range filtro: {data_ini_dt} a {data_fim_dt}")
+                                    print(f"      ✅ Data válida: {data_ini_dt <= data_criacao <= data_fim_dt}")
+                                
                                 if data_ini_dt <= data_criacao <= data_fim_dt:
                                     data_valida = True
                                     break
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as e:
+                        if ad_count < 3:
+                            print(f"      ❌ Erro ao parsear data '{data_str}': {e}")
                         continue
                 
                 # Se não há filtro de data ou se a data está no período, conta o registro
                 if data_valida:
                     ad_count += 1
-                    # Extrai CPF do registro
-                    cpf_encontrado = None
-                    for col in colunas_cpf:
-                        valor_cpf = row[col] if col in row else None
-                        if valor_cpf is not None:
-                            valor_cpf_str = str(valor_cpf).strip()
-                            # Usar a nova função de limpeza de CPF
-                            cpf_limpo = limpar_cpf(valor_cpf_str)
-                            if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                        cpf_encontrado = cpf_limpo
-                                        break
-                    
-                    # Categoriza por status
-                    status_encontrado = False
-                    for col in colunas_status:
-                        valor_status = row[col] if col in row else None
-                        if valor_status is not None:
-                            valor_status_str = str(valor_status).strip().upper()
-                            if valor_status_str.startswith('INSS'):
-                                ad_por_status['Novo'] += 1
-                                if cpf_encontrado:
-                                    ad_cpfs_por_status['Novo'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                            elif valor_status_str.startswith('FGTS'):
-                                ad_por_status['FGTS'] += 1
-                                if cpf_encontrado:
-                                    ad_cpfs_por_status['FGTS'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                            elif valor_status_str.startswith('CLT'):
-                                ad_por_status['CLT'] += 1
-                                if cpf_encontrado:
-                                    ad_cpfs_por_status['CLT'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                    
-                    if not status_encontrado:
-                        ad_por_status['Outros'] += 1
-                        if cpf_encontrado:
-                            ad_cpfs_por_status['Outros'].add(cpf_encontrado)
+                    if ad_count <= 3:
+                        print(f"      ✅ Registro AD ACEITO pelo filtro de data (Total: {ad_count})")
+                else:
+                    if ad_count < 3:
+                        print(f"      ❌ Registro AD REJEITADO pelo filtro de data")
+                    continue  # Pula para o próximo registro se a data não for válida
             else:
-                # Se não há filtro de data, conta todos os registros "ad"
+                # Se não há filtro de data, conta o registro
                 ad_count += 1
-                # Extrai CPF do registro
-                cpf_encontrado = None
-                for col in colunas_cpf:
-                    valor_cpf = row[col] if col in row else None
-                    if valor_cpf is not None:
-                        valor_cpf_str = str(valor_cpf).strip()
-                        # Usar a nova função de limpeza de CPF
-                        cpf_limpo = limpar_cpf(valor_cpf_str)
-                        if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                cpf_encontrado = cpf_limpo
-                                break
-                
-                # Categoriza por status
-                status_encontrado = False
-                for col in colunas_status:
-                    valor_status = row[col] if col in row else None
-                    if valor_status is not None:
-                        valor_status_str = str(valor_status).strip().upper()
-                        if valor_status_str.startswith('INSS'):
-                            ad_por_status['Novo'] += 1
-                            if cpf_encontrado:
-                                ad_cpfs_por_status['Novo'].add(cpf_encontrado)
-                            status_encontrado = True
-                            break
-                        elif valor_status_str.startswith('FGTS'):
-                            ad_por_status['FGTS'] += 1
-                            if cpf_encontrado:
-                                ad_cpfs_por_status['FGTS'].add(cpf_encontrado)
-                            status_encontrado = True
-                            break
-                        elif valor_status_str.startswith('CLT'):
-                            ad_por_status['CLT'] += 1
-                            if cpf_encontrado:
-                                ad_cpfs_por_status['CLT'].add(cpf_encontrado)
-                            status_encontrado = True
-                            break
-                
-                if not status_encontrado:
-                    ad_por_status['Outros'] += 1
-                    if cpf_encontrado:
-                        ad_cpfs_por_status['Outros'].add(cpf_encontrado)
+                if ad_count <= 3:
+                    print(f"      ✅ Registro AD ACEITO (sem filtro de data) (Total: {ad_count})")
+            
+            # Extrai CPF do registro (apenas se o registro foi aceito)
+            cpf_encontrado = None
+            for col in colunas_cpf:
+                valor_cpf = row[col] if col in row else None
+                if valor_cpf is not None:
+                    valor_cpf_str = str(valor_cpf).strip()
+                    # Usar a nova função de limpeza de CPF
+                    cpf_limpo = limpar_cpf(valor_cpf_str)
+                    if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                        cpf_encontrado = cpf_limpo
+                        if ad_count <= 5:  # Mostrar apenas os primeiros 5 para debug
+                            print(f"      ✅ CPF encontrado na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
+                        break
+                    elif ad_count <= 3:  # Mostrar apenas os primeiros 3 para debug
+                        print(f"      ⚠️ CPF inválido na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
+            
+            # Categoriza por status
+            status_encontrado = False
+            for col in colunas_status:
+                valor_status = row[col] if col in row else None
+                if valor_status is not None:
+                    valor_status_str = str(valor_status).strip().upper()
+                    if valor_status_str.startswith('INSS'):
+                        ad_por_status['Novo'] += 1
+                        if cpf_encontrado:
+                            ad_cpfs_por_status['Novo'].add(cpf_encontrado)
+                        status_encontrado = True
+                        break
+                    elif valor_status_str.startswith('FGTS'):
+                        ad_por_status['FGTS'] += 1
+                        if cpf_encontrado:
+                            ad_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                        status_encontrado = True
+                        break
+                    elif valor_status_str.startswith('CLT'):
+                        ad_por_status['CLT'] += 1
+                        if cpf_encontrado:
+                            ad_cpfs_por_status['CLT'].add(cpf_encontrado)
+                        status_encontrado = True
+                        break
+            
+            if not status_encontrado:
+                ad_por_status['Outros'] += 1
+                if cpf_encontrado:
+                    ad_cpfs_por_status['Outros'].add(cpf_encontrado)
     
+    # Log final dos resultados
+    print(f"🔍 DEBUG - Resultados da extração AD:")
+    print(f"   📊 Total de registros AD encontrados: {ad_count}")
+    print(f"   📋 Distribuição por status: {ad_por_status}")
+    print(f"   📋 CPFs únicos por status: {dict((k, len(v)) for k, v in ad_cpfs_por_status.items())}")
+    
+    print(f"🔍 DEBUG - FUNÇÃO extrair_ad_da_base CONCLUÍDA")
     return ad_count, ad_por_status, ad_cpfs_por_status
 
 def main():
@@ -1682,6 +2011,10 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # TESTE SIMPLES PARA VERIFICAR SE ESTÁ FUNCIONANDO
+    st.success("✅ Função main() está sendo executada!")
+    st.info("🔍 Verificando se o Streamlit está funcionando...")
     
     # Estilos CSS para evitar problemas de JavaScript
     st.markdown("""
@@ -1907,9 +2240,15 @@ def main():
     print(f"   🔍 É dia atual? {data_fim == datetime.now().date()}")
     
     # Verificar se há base carregada
+    df_base = None  # Inicializar variável
     if uploaded_file is not None:
-        print(f"📁 Base carregada: {uploaded_file.name}")
-        print(f"📊 Tamanho da base: {len(df_base) if df_base is not None else 0} registros")
+        try:
+            df_base = ler_base(uploaded_file)
+            print(f"📁 Base carregada: {uploaded_file.name}")
+            print(f"📊 Tamanho da base: {len(df_base) if df_base is not None else 0} registros")
+        except Exception as e:
+            print(f"❌ Erro ao carregar base: {e}")
+            df_base = None
     else:
         print(f"⚠️ Nenhuma base carregada")
     
@@ -1924,6 +2263,36 @@ def main():
         print(f"⚠️ Nenhuma mensagem recebida da API")
     
     print(f"📊 Resultado final: {len(messages) if messages else 0} SMS, {total_acessos} acessos")
+    
+    # Inicializar variáveis para contagem de URA ANTES de serem usadas
+    ura_count = 0
+    ura_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    ura_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
+    
+    # Inicializar variáveis para contagem de AD
+    ad_count = 0
+    ad_por_status = {
+        'Novo': 0,
+        'FGTS': 0,
+        'CLT': 0,
+        'Outros': 0
+    }
+    ad_cpfs_por_status = {
+        'Novo': set(),
+        'FGTS': set(),
+        'CLT': set(),
+        'Outros': set()
+    }
     
     # CALCULAR LEADS GERADOS ANTES DA RENDERIZAÇÃO DO HTML
     total_leads_gerados = 0
@@ -1976,24 +2345,8 @@ def main():
 
 
     
-    # Inicializar variáveis para contagem de URA
-    ura_count = 0
-    ura_por_status = {
-        'Novo': 0,
-        'FGTS': 0,
-        'CLT': 0,
-        'Outros': 0
-    }
-    ura_cpfs_por_status = {
-        'Novo': set(),
-        'FGTS': set(),
-        'CLT': set(),
-        'Outros': set()
-    }
-    
-    if uploaded_file is not None:
+    if uploaded_file is not None and df_base is not None:
         try:
-            df_base = ler_base(uploaded_file)
             print(f"📊 Base carregada com sucesso: {len(df_base)} registros")
             
             # Extrair contagem de URA da base com filtro de data e separação por status
@@ -2002,6 +2355,33 @@ def main():
             print(f"🔍 DEBUG - Extração URA concluída:")
             print(f"   📊 Total URA: {ura_count}")
             print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
+            
+            # Extrair contagem de AD da base com filtro de data e separação por status
+            print(f"🔍 DEBUG - Iniciando extração AD da base...")
+            print(f"   📊 df_base shape: {df_base.shape if df_base is not None else 'None'}")
+            print(f"   📋 df_base columns: {list(df_base.columns) if df_base is not None else 'None'}")
+            
+            # Teste simples para verificar se há dados
+            if df_base is not None and not df_base.empty:
+                print(f"   ✅ DataFrame não está vazio")
+                # Verificar se há coluna "utm source"
+                if "utm source" in df_base.columns:
+                    print(f"   ✅ Coluna 'utm source' encontrada")
+                    valores_utm = df_base["utm source"].dropna().unique()
+                    print(f"   📋 Valores únicos em 'utm source': {valores_utm}")
+                    # Contar registros com "ad"
+                    registros_ad = df_base[df_base["utm source"].str.lower() == "ad"]
+                    print(f"   📊 Registros com 'ad': {len(registros_ad)}")
+                else:
+                    print(f"   ❌ Coluna 'utm source' NÃO encontrada")
+                    print(f"   📋 Colunas disponíveis: {list(df_base.columns)}")
+            else:
+                print(f"   ❌ DataFrame está vazio ou None")
+            
+            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+            print(f"🔍 DEBUG - Extração AD concluída:")
+            print(f"   📊 Total AD: {ad_count}")
+            print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ad_cpfs_por_status.items())}")
             
             # CONSULTA AUTOMÁTICA NA FACTA
             # Obter CPFs para consulta na Facta baseado no centro de custo selecionado
@@ -2037,7 +2417,7 @@ def main():
                     propostas_facta = consultar_facta_multiplos_cpfs(
                         list(cpfs_para_consulta), 
                         token=None, 
-                        max_workers=3, 
+                        max_workers=8, 
                         data_ini=data_ini, 
                         data_fim=data_fim
                     )
@@ -2068,7 +2448,74 @@ def main():
                 st.session_state["producao_facta_ura"] = 0.0
                 st.session_state["total_vendas_facta_ura"] = 0
             
-            # Processar dados do WhatsApp e AD silenciosamente
+            # CONSULTA AUTOMÁTICA NA FACTA PARA AD
+            # Obter CPFs para consulta na Facta baseado no centro de custo selecionado
+            print(f"🔍 DEBUG - Extraindo CPFs AD para consulta Facta...")
+            print(f"   🏢 Centro de custo selecionado: {centro_custo_selecionado}")
+            print(f"   📊 CPFs AD por status: {dict((k, len(v)) for k, v in ad_cpfs_por_status.items())}")
+            
+            cpfs_ad_para_consulta = set()
+            
+            if centro_custo_selecionado == "Novo":
+                cpfs_ad_para_consulta = ad_cpfs_por_status.get('Novo', set())
+                print(f"   🎯 Selecionando CPFs AD 'Novo': {len(cpfs_ad_para_consulta)}")
+            elif centro_custo_selecionado == "FGTS":
+                cpfs_ad_para_consulta = ad_cpfs_por_status.get('FGTS', set())
+                print(f"   🎯 Selecionando CPFs AD 'FGTS': {len(cpfs_ad_para_consulta)}")
+            elif centro_custo_selecionado == "Crédito CLT":
+                cpfs_ad_para_consulta = ad_cpfs_por_status.get('CLT', set())
+                print(f"   🎯 Selecionando CPFs AD 'CLT': {len(cpfs_ad_para_consulta)}")
+            else:
+                # Se "TODOS", usar todos os CPFs
+                for cpfs_status in ad_cpfs_por_status.values():
+                    cpfs_ad_para_consulta.update(cpfs_status)
+                print(f"   🎯 Selecionando TODOS os CPFs AD: {len(cpfs_ad_para_consulta)}")
+            
+            if cpfs_ad_para_consulta:
+                print(f"🔍 CPFs AD para consulta Facta: {len(cpfs_ad_para_consulta)}")
+                print(f"   📋 Primeiros 5 CPFs AD: {list(cpfs_ad_para_consulta)[:5]}")
+                
+                # Consultar Facta para os CPFs AD encontrados
+                try:
+                    print(f"🚀 Iniciando consulta Facta para AD...")
+                    propostas_facta_ad = consultar_facta_multiplos_cpfs(
+                        list(cpfs_ad_para_consulta), 
+                        token=None, 
+                        max_workers=8, 
+                        data_ini=data_ini, 
+                        data_fim=data_fim
+                    )
+                    
+                    print(f"📊 Resultados Facta AD: {len(propostas_facta_ad)} CPFs com propostas")
+                    
+                    # Analisar resultados da Facta
+                    if propostas_facta_ad:
+                        analise_facta_ad = analisar_propostas_facta(propostas_facta_ad, status_facta_valor)
+                        
+                        # Atualizar métricas com dados da Facta (AD)
+                        st.session_state["producao_facta_ad"] = analise_facta_ad['valor_total_propostas']
+                        st.session_state["total_vendas_facta_ad"] = analise_facta_ad['total_propostas']
+                        
+                        print(f"💰 Produção Facta AD: R$ {analise_facta_ad['valor_total_propostas']:,.2f}")
+                        print(f"📈 Total vendas Facta AD: {analise_facta_ad['total_propostas']}")
+                        print(f"🔍 DEBUG - Session state atualizado:")
+                        print(f"   💰 producao_facta_ad: {st.session_state.get('producao_facta_ad', 'NÃO ENCONTRADO')}")
+                        print(f"   📈 total_vendas_facta_ad: {st.session_state.get('total_vendas_facta_ad', 'NÃO ENCONTRADO')}")
+                    else:
+                        st.session_state["producao_facta_ad"] = 0.0
+                        st.session_state["total_vendas_facta_ad"] = 0
+                        print(f"⚠️ Nenhuma proposta encontrada na Facta para AD")
+                        
+                except Exception as e:
+                    print(f"❌ Erro na consulta Facta AD: {e}")
+                    st.session_state["producao_facta_ad"] = 0.0
+                    st.session_state["total_vendas_facta_ad"] = 0
+            else:
+                print(f"⚠️ Nenhum CPF AD encontrado para consulta Facta")
+                st.session_state["producao_facta_ad"] = 0.0
+                st.session_state["total_vendas_facta_ad"] = 0
+            
+            # Processar dados do WhatsApp silenciosamente
             try:
                 whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
                 ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
@@ -2278,46 +2725,88 @@ def main():
         ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
         ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
 
-    # CONSULTA ADICIONAL NA FACTA PARA FGTS (COM CPFs DO KOLMEYA)
-    
-    # CONSULTA ADICIONAL NA FACTA PARA FGTS (COM CPFs DO KOLMEYA)
-    if centro_custo_selecionado == "FGTS" and messages:
-        # Extrair CPFs do Kolmeya
-        cpfs_kolmeya = extrair_cpfs_kolmeya(messages)
-        
-        if cpfs_kolmeya:
-            # Consultar Facta para os CPFs do Kolmeya
-            try:
-                propostas_facta_kolmeya = consultar_facta_multiplos_cpfs(
-                    list(cpfs_kolmeya), 
-                    token=None, 
-                    max_workers=3, 
-                    data_ini=data_ini, 
-                    data_fim=data_fim
-                )
+    # CONSULTA DA FACTA PARA KOLMEYA (COM CPFs DOS ACESSOS DO KOLMEYA)
+    # Usar acessos em vez de mensagens para CPFs mais relevantes
+    if messages:
+        # Verificar token da Facta primeiro
+        token_facta = get_facta_token()
+        if not token_facta:
+            print(f"❌ Token da Facta não encontrado para consulta Kolmeya")
+            st.session_state["producao_facta_kolmeya"] = 0.0
+            st.session_state["total_vendas_facta_kolmeya"] = 0
+        else:
+            print(f"✅ Token da Facta encontrado: {token_facta[:10]}...")
+            
+            # Consultar acessos do Kolmeya (mais eficiente que mensagens)
+            print(f"🔍 Consultando acessos do Kolmeya...")
+            acessos_kolmeya = consultar_acessos_sms_kolmeya(
+                start_at=data_ini.strftime('%Y-%m-%d'),  # Formato correto: apenas data
+                end_at=data_fim.strftime('%Y-%m-%d'),    # Formato correto: apenas data
+                limit=5000,
+                token=get_kolmeya_token()
+            )
+            
+            if acessos_kolmeya:
+                # Extrair CPFs dos acessos (mais relevantes que mensagens)
+                cpfs_acessos = extrair_cpfs_acessos_kolmeya(acessos_kolmeya)
                 
-                # Analisar resultados da Facta para CPFs do Kolmeya
-                if propostas_facta_kolmeya:
-                    analise_facta_kolmeya = analisar_propostas_facta(propostas_facta_kolmeya)
+                print(f"🔍 DEBUG - CPFs extraídos dos acessos do Kolmeya:")
+                print(f"   📊 Total de acessos: {len(acessos_kolmeya)}")
+                print(f"   📊 Total de CPFs únicos de acessos: {len(cpfs_acessos)}")
+                if cpfs_acessos:
+                    print(f"   📋 Primeiros 5 CPFs de acessos: {list(cpfs_acessos)[:5]}")
+                    print(f"   🔍 CPFs de acessos para consulta Facta: {len(cpfs_acessos)}")
                     
-                    # Manter dados separados para os painéis
-                    st.session_state["producao_facta_kolmeya"] = analise_facta_kolmeya['valor_total_propostas']
-                    st.session_state["total_vendas_facta_kolmeya"] = analise_facta_kolmeya['total_propostas']
-                    
-                    # Calcular totais para FGTS
-                    producao_total = st.session_state.get("producao_facta_ura", 0.0) + analise_facta_kolmeya['valor_total_propostas']
-                    vendas_total = st.session_state.get("total_vendas_facta_ura", 0) + analise_facta_kolmeya['total_propostas']
-                    
-                    st.session_state["producao_facta_total"] = producao_total
-                    st.session_state["total_vendas_facta_total"] = vendas_total
-                    
-            except Exception:
-                pass
-    
-
-    
-
-
+                    # Consultar Facta para os CPFs dos acessos (mais eficiente)
+                    try:
+                        print(f"🚀 Iniciando consulta Facta para CPFs de acessos do Kolmeya...")
+                        propostas_facta_kolmeya = consultar_facta_multiplos_cpfs(
+                            list(cpfs_acessos), 
+                            token=token_facta, 
+                            max_workers=8, 
+                            data_ini=data_ini, 
+                            data_fim=data_fim
+                        )
+                        
+                        # Analisar resultados da Facta para CPFs dos acessos
+                        if propostas_facta_kolmeya:
+                            analise_facta_kolmeya = analisar_propostas_facta(propostas_facta_kolmeya, status_facta_valor)
+                            
+                            # Manter dados separados para os painéis
+                            st.session_state["producao_facta_kolmeya"] = analise_facta_kolmeya['valor_total_propostas']
+                            st.session_state["total_vendas_facta_kolmeya"] = analise_facta_kolmeya['total_propostas']
+                            
+                            print(f"💰 Produção Facta Kolmeya (Acessos): R$ {analise_facta_kolmeya['valor_total_propostas']:,.2f}")
+                            print(f"📈 Total vendas Facta Kolmeya (Acessos): {analise_facta_kolmeya['total_propostas']}")
+                            
+                            # Calcular totais para FGTS (se for o centro de custo selecionado)
+                            if centro_custo_selecionado == "FGTS":
+                                producao_total = st.session_state.get("producao_facta_ura", 0.0) + analise_facta_kolmeya['valor_total_propostas']
+                                vendas_total = st.session_state.get("total_vendas_facta_ura", 0) + analise_facta_kolmeya['total_propostas']
+                                
+                                st.session_state["producao_facta_total"] = producao_total
+                                st.session_state["total_vendas_facta_total"] = vendas_total
+                        else:
+                            st.session_state["producao_facta_kolmeya"] = 0.0
+                            st.session_state["total_vendas_facta_kolmeya"] = 0
+                            print(f"⚠️ Nenhuma proposta encontrada na Facta para CPFs de acessos do Kolmeya")
+                            
+                    except Exception as e:
+                        print(f"❌ Erro na consulta Facta Kolmeya (Acessos): {e}")
+                        st.session_state["producao_facta_kolmeya"] = 0.0
+                        st.session_state["total_vendas_facta_kolmeya"] = 0
+                else:
+                    print(f"   ⚠️ Nenhum CPF encontrado nos acessos do Kolmeya")
+                    st.session_state["producao_facta_kolmeya"] = 0.0
+                    st.session_state["total_vendas_facta_kolmeya"] = 0
+            else:
+                print(f"⚠️ Nenhum acesso encontrado no Kolmeya")
+                st.session_state["producao_facta_kolmeya"] = 0.0
+                st.session_state["total_vendas_facta_kolmeya"] = 0
+    else:
+        print(f"⚠️ Nenhuma mensagem do Kolmeya para consulta de acessos")
+        st.session_state["producao_facta_kolmeya"] = 0.0
+        st.session_state["total_vendas_facta_kolmeya"] = 0
 
     # Layout simplificado com HTML puro - sem componentes Streamlit
     st.markdown("""
@@ -2446,9 +2935,8 @@ def main():
     telefones_kolmeya = extrair_telefones_kolmeya(messages) if messages else set()
     telefones_base_kolmeya = set()
     
-    if uploaded_file is not None:
+    if uploaded_file is not None and df_base is not None:
         try:
-            df_base = ler_base(uploaded_file)
             telefones_base_kolmeya = extrair_telefones_da_base(df_base, data_ini, data_fim)
             
             # Calcular telefones coincidentes (leads gerados)
@@ -2467,14 +2955,14 @@ def main():
         print(f"⚠️ Nenhuma base carregada para comparação")
     
     # Dados reais do Kolmeya - usar dados da Facta quando disponíveis
-    if centro_custo_selecionado == "FGTS":
-        # Para FGTS, usar dados do Kolmeya da Facta
-        total_vendas = st.session_state.get("total_vendas_facta_kolmeya", 0)
-        producao = st.session_state.get("producao_facta_kolmeya", 0.0)
-    else:
-        # Para outros centros de custo, dados virão da Facta (URA)
-        total_vendas = 0  # Dados reais virão da Facta
-        producao = 0.0    # Dados reais virão da Facta
+    # Para TODOS os centros de custo, usar dados do Kolmeya da Facta
+    total_vendas = st.session_state.get("total_vendas_facta_kolmeya", 0)
+    producao = st.session_state.get("producao_facta_kolmeya", 0.0)
+    
+    print(f"🔍 DEBUG - Dados Facta Kolmeya carregados:")
+    print(f"   📊 Total vendas: {total_vendas}")
+    print(f"   💰 Produção: R$ {producao:,.2f}")
+    print(f"   🏢 Centro de custo: {centro_custo_selecionado}")
     
     # Previsão de faturamento (comissão de 17.1%)
     previsao_faturamento = producao * 0.171
@@ -2544,9 +3032,8 @@ def main():
     roi_ura = producao_ura - total_investimento
 
     # Dados do PAINEL WHATSAPP baseados nos dados reais da base e Facta
-    if uploaded_file is not None:
+    if uploaded_file is not None and df_base is not None:
         try:
-            df_base = ler_base(uploaded_file)
             whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
             
             # Usar dados reais do WhatsApp
@@ -2593,9 +3080,8 @@ def main():
         roi_novo = 0.0
 
     # Dados do TERCEIRO PAINEL baseados nos dados reais da base e Facta
-    if uploaded_file is not None:
+    if uploaded_file is not None and df_base is not None:
         try:
-            df_base = ler_base(uploaded_file)
             ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
             
             # Usar dados reais do AD
@@ -2758,6 +3244,78 @@ def main():
             print(f"❌ Erro ao salvar métricas no banco: {e}")
             import traceback
             traceback.print_exc()
+    
+    # MOSTRAR RESUMO DETALHADO DOS RESULTADOS DA FACTA
+    st.markdown("---")
+    st.markdown("### 📊 Resumo Detalhado - Consultas Facta")
+    
+    # Resumo URA (4NET)
+    if st.session_state.get("producao_facta_ura", 0) > 0:
+        st.success(f"✅ **URA (4NET)**: R$ {st.session_state['producao_facta_ura']:,.2f} em {st.session_state['total_vendas_facta_ura']} vendas")
+    
+    # Resumo Kolmeya
+    if st.session_state.get("producao_facta_kolmeya", 0) > 0:
+        st.success(f"✅ **Kolmeya**: R$ {st.session_state['producao_facta_kolmeya']:,.2f} em {st.session_state['total_vendas_facta_kolmeya']} vendas")
+    
+    # Resumo WhatsApp
+    if st.session_state.get("producao_facta_whatsapp", 0) > 0:
+        st.success(f"✅ **WhatsApp**: R$ {st.session_state['producao_facta_whatsapp']:,.2f} em {st.session_state['total_vendas_facta_whatsapp']} vendas")
+    
+    # Resumo AD
+    if st.session_state.get("producao_facta_ad", 0) > 0:
+        st.success(f"✅ **AD**: R$ {st.session_state['producao_facta_ad']:,.2f} em {st.session_state['total_vendas_facta_ad']} vendas")
+    
+    # Total geral
+    total_geral_facta = (
+        st.session_state.get("producao_facta_ura", 0) +
+        st.session_state.get("producao_facta_kolmeya", 0) +
+        st.session_state.get("producao_facta_whatsapp", 0) +
+        st.session_state.get("producao_facta_ad", 0)
+    )
+    
+    if total_geral_facta > 0:
+        st.markdown(f"### 💰 **Total Geral Facta: R$ {total_geral_facta:,.2f}**")
+        
+        # Calcular comissão estimada (17.1%)
+        comissao_estimada = total_geral_facta * 0.171
+        st.info(f"💡 **Comissão Estimada (17.1%): R$ {comissao_estimada:,.2f}**")
+        
+        # Mostrar detalhes dos CPFs consultados (expandível)
+        with st.expander("🔍 Ver Detalhes dos CPFs Consultados"):
+            st.markdown("#### 📋 Resumo por Canal")
+            
+            # URA (4NET)
+            if st.session_state.get("producao_facta_ura", 0) > 0:
+                st.markdown(f"**URA (4NET)**:")
+                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_ura']:,.2f}")
+                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_ura']}")
+                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_ura'] / max(st.session_state['total_vendas_facta_ura'], 1):,.2f}")
+                st.markdown("---")
+            
+            # Kolmeya
+            if st.session_state.get("producao_facta_kolmeya", 0) > 0:
+                st.markdown(f"**Kolmeya**:")
+                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_kolmeya']:,.2f}")
+                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_kolmeya']}")
+                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_kolmeya'] / max(st.session_state['total_vendas_facta_kolmeya'], 1):,.2f}")
+                st.markdown("---")
+            
+            # WhatsApp
+            if st.session_state.get("producao_facta_whatsapp", 0) > 0:
+                st.markdown(f"**WhatsApp**:")
+                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_whatsapp']:,.2f}")
+                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_whatsapp']}")
+                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_whatsapp'] / max(st.session_state['total_vendas_facta_whatsapp'], 1):,.2f}")
+                st.markdown("---")
+            
+            # AD
+            if st.session_state.get("producao_facta_ad", 0) > 0:
+                st.markdown(f"**AD**:")
+                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_ad']:,.2f}")
+                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_ad']}")
+                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_ad'] / max(st.session_state['total_vendas_facta_ad'], 1):,.2f}")
+    else:
+        st.warning("⚠️ Nenhum resultado encontrado na Facta para o período selecionado")
     
     # Dashboard HTML usando st.components.html para melhor renderização
     import streamlit.components.v1 as components
@@ -3092,6 +3650,14 @@ def main():
                         <div class="detail-label">Ticket Médio</div>
                         <div class="detail-value">{formatar_real(producao_segundo/total_vendas_segundo if total_vendas_segundo > 0 else 0)}</div>
                     </div>
+                    <div class="detail-item">
+                        <div class="detail-label">UTMs AD</div>
+                        <div class="detail-value">{ad_count:,}</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">CPFs AD</div>
+                        <div class="detail-value">{sum(len(cpfs) for cpfs in ad_cpfs_por_status.values()):,}</div>
+                    </div>
                 </div>
             </div>
             <div class="roi-section">
@@ -3129,9 +3695,8 @@ def main():
     media_venda = 0.0
 
     # Upload de base local (seção de comparação)
-    if uploaded_file is not None:
+    if uploaded_file is not None and df_base is not None:
         try:
-            df_base = ler_base(uploaded_file)
             
             # Extrair telefones da base carregada (com filtro de data) - usar variável diferente
             telefones_base_todos = extrair_telefones_da_base(df_base, data_ini, data_fim)
@@ -3341,6 +3906,7 @@ def test_environment_status():
         except Exception as e:
             st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
 
+
 if __name__ == "__main__":
     try:
         main()
@@ -3351,3 +3917,4 @@ if __name__ == "__main__":
         # Botão para tentar recarregar
         if st.button("🔄 Tentar Novamente"):
             st.rerun()
+
