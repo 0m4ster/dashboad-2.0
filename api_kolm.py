@@ -1763,6 +1763,11 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
     print(f"   📋 Distribuição por status: {whatsapp_por_status}")
     print(f"   📋 CPFs únicos por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
     
+    # Debug adicional: Mostrar CPFs encontrados
+    for status, cpfs in whatsapp_cpfs_por_status.items():
+        if cpfs:
+            print(f"   📋 CPFs {status} encontrados: {list(cpfs)[:3]}")  # Mostrar primeiros 3 CPFs
+    
     print(f"🔍 DEBUG - FUNÇÃO extrair_whatsapp_da_base CONCLUÍDA")
     return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
 
@@ -2012,9 +2017,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # TESTE SIMPLES PARA VERIFICAR SE ESTÁ FUNCIONANDO
-    st.success("✅ Função main() está sendo executada!")
-    st.info("🔍 Verificando se o Streamlit está funcionando...")
+
     
     # Estilos CSS para evitar problemas de JavaScript
     st.markdown("""
@@ -2501,6 +2504,11 @@ def main():
                         print(f"🔍 DEBUG - Session state atualizado:")
                         print(f"   💰 producao_facta_ad: {st.session_state.get('producao_facta_ad', 'NÃO ENCONTRADO')}")
                         print(f"   📈 total_vendas_facta_ad: {st.session_state.get('total_vendas_facta_ad', 'NÃO ENCONTRADO')}")
+                        print(f"🔍 DEBUG - Valores da análise Facta AD:")
+                        print(f"   📊 Total CPFs consultados: {analise_facta_ad.get('total_cpfs_consultados', 0)}")
+                        print(f"   📊 Total propostas: {analise_facta_ad.get('total_propostas', 0)}")
+                        print(f"   💰 Valor total propostas: {analise_facta_ad.get('valor_total_propostas', 0)}")
+                        print(f"   📋 CPFs com valores: {len(analise_facta_ad.get('cpfs_com_valores', []))}")
                     else:
                         st.session_state["producao_facta_ad"] = 0.0
                         st.session_state["total_vendas_facta_ad"] = 0
@@ -2510,15 +2518,29 @@ def main():
                     print(f"❌ Erro na consulta Facta AD: {e}")
                     st.session_state["producao_facta_ad"] = 0.0
                     st.session_state["total_vendas_facta_ad"] = 0
-            else:
-                print(f"⚠️ Nenhum CPF AD encontrado para consulta Facta")
-                st.session_state["producao_facta_ad"] = 0.0
-                st.session_state["total_vendas_facta_ad"] = 0
-            
+                else:
+                    print(f"⚠️ Nenhum CPF AD encontrado para consulta Facta")
+                    st.session_state["producao_facta_ad"] = 0.0
+                    st.session_state["total_vendas_facta_ad"] = 0
+                
             # Processar dados do WhatsApp silenciosamente
             try:
                 whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
                 ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+                
+                print(f"🔍 DEBUG - Dados WhatsApp extraídos:")
+                print(f"   📊 Total registros WhatsApp: {whatsapp_count}")
+                print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+                print(f"   🏢 Centro de custo selecionado: {centro_custo_selecionado}")
+                
+                print(f"🔍 DEBUG - Processando WhatsApp na Facta:")
+                print(f"   📊 WhatsApp count: {whatsapp_count}")
+                print(f"   📋 CPFs WhatsApp por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+                
+                # Debug detalhado dos CPFs encontrados
+                for status, cpfs in whatsapp_cpfs_por_status.items():
+                    if cpfs:
+                        print(f"   📋 CPFs {status}: {list(cpfs)[:5]}")  # Mostrar primeiros 5 CPFs
                 
                 # Processar WhatsApp na Facta
                 if whatsapp_count > 0:
@@ -2929,7 +2951,7 @@ def main():
     print(f"   💰 Investimento calculado: R$ {investimento:.2f}")
     
     # CAMPO 1: Taxa de entrega
-    taxa_entrega = (mensagens_entregues / total_mensagens * 100) if total_mensagens > 0 else 0.0
+    disparos_por_lead = (leads_gerados_kolmeya / total_mensagens * 100) if total_mensagens > 0 else 0.0
     
     # CORREÇÃO: Calcular leads gerados comparando telefones da API com telefones da base
     telefones_kolmeya = extrair_telefones_kolmeya(messages) if messages else set()
@@ -3036,6 +3058,12 @@ def main():
         try:
             whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
             
+            print(f"🔍 DEBUG - Painel WhatsApp - Dados extraídos:")
+            print(f"   📊 WhatsApp count: {whatsapp_count}")
+            print(f"   📋 CPFs WhatsApp por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+            print(f"   🔍 Session state WhatsApp - Produção: {st.session_state.get('producao_facta_whatsapp', 'NÃO ENCONTRADO')}")
+            print(f"   🔍 Session state WhatsApp - Vendas: {st.session_state.get('total_vendas_facta_whatsapp', 'NÃO ENCONTRADO')}")
+            
             # Usar dados reais do WhatsApp
             campanhas_realizadas = whatsapp_count  # Total de mensagens WhatsApp
             camp_atendidas = (whatsapp_count / max(telefones_base, 1)) * 100 if telefones_base > 0 else 0.0  # Taxa de engajamento
@@ -3043,20 +3071,25 @@ def main():
             tempo_medio_campanha = 2.5  # Tempo médio de resposta em horas
             total_engajados = whatsapp_count  # Total de mensagens enviadas
             
-            # Usar dados reais da Facta se disponíveis, senão usar estimativas
-            if st.session_state.get("producao_facta_whatsapp", 0) > 0:
-                # Dados reais da Facta
-                total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
-                producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
-                # Dados reais da Facta
-                total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
-                producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
-            else:
-                # Estimativas baseadas em conversão
+            # SEMPRE usar dados reais da Facta se disponíveis, independente do valor
+            total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
+            producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
+            
+            # Se não há dados da Facta, usar estimativas
+            if producao_novo == 0:
                 total_vendas_novo = whatsapp_count * 0.15  # Estimativa de vendas (15% de conversão)
                 producao_novo = total_vendas_novo * 5000  # Produção estimada (ticket médio R$ 5.000)
             
             roi_novo = producao_novo - total_investimento_novo
+            
+            # Debug: Mostrar valores encontrados
+            print(f"🔍 DEBUG - Painel WhatsApp - Valores encontrados:")
+            print(f"   📊 Campanhas realizadas: {campanhas_realizadas}")
+            print(f"   💰 Produção Facta: R$ {producao_novo:,.2f}")
+            print(f"   📈 Total vendas Facta: {total_vendas_novo}")
+            print(f"   💰 ROI calculado: R$ {roi_novo:,.2f}")
+            print(f"   🔍 Session state WhatsApp - Produção: {st.session_state.get('producao_facta_whatsapp', 'NÃO ENCONTRADO')}")
+            print(f"   🔍 Session state WhatsApp - Vendas: {st.session_state.get('total_vendas_facta_whatsapp', 'NÃO ENCONTRADO')}")
         except Exception as e:
             print(f"Erro ao processar dados do WhatsApp: {e}")
             # Fallback para valores padrão
@@ -3091,20 +3124,26 @@ def main():
             tempo_medio_acao = 3.0  # Tempo médio de resposta em horas
             total_efetivos = ad_count  # Total de ações realizadas
             
-            # Usar dados reais da Facta se disponíveis, senão usar estimativas
-            if st.session_state.get("producao_facta_ad", 0) > 0:
-                # Dados reais da Facta
-                total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
-                producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
-                # Dados reais da Facta
-                total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
-                producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
-            else:
-                # Estimativas baseadas em conversão
+            # SEMPRE usar dados reais da Facta se disponíveis, independente do valor
+            total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
+            producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
+            
+            # Se não há dados da Facta, usar estimativas
+            if producao_segundo == 0:
                 total_vendas_segundo = ad_count * 0.12  # Estimativa de vendas (12% de conversão)
                 producao_segundo = total_vendas_segundo * 4500  # Produção estimada (ticket médio R$ 4.500)
             
             roi_segundo = producao_segundo - total_investimento_segundo
+            
+            # Debug: Mostrar valores encontrados
+            print(f"🔍 DEBUG - Painel AD - Valores encontrados:")
+            print(f"   📊 Ações realizadas: {acoes_realizadas}")
+            print(f"   💰 Produção Facta: R$ {producao_segundo:,.2f}")
+            print(f"   📈 Total vendas Facta: {total_vendas_segundo}")
+            print(f"   💰 ROI calculado: R$ {roi_segundo:,.2f}")
+            print(f"   🔍 Session state AD - Produção: {st.session_state.get('producao_facta_ad', 'NÃO ENCONTRADO')}")
+            print(f"   🔍 Session state AD - Vendas: {st.session_state.get('total_vendas_facta_ad', 'NÃO ENCONTRADO')}")
+            
         except Exception as e:
             print(f"Erro ao processar dados do AD: {e}")
             # Fallback para valores padrão
@@ -3146,6 +3185,19 @@ def main():
     producao_segundo = getattr(locals(), 'producao_segundo', 0.0)
     total_efetivos = getattr(locals(), 'total_efetivos', 0)
     roi_segundo = getattr(locals(), 'roi_segundo', 0.0)
+    
+    # Garantir que os valores da Facta sejam usados corretamente
+    if st.session_state.get("producao_facta_ad", 0) > 0:
+        producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
+        total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
+        print(f"🔍 DEBUG - Usando valores reais da Facta AD: R$ {producao_segundo:,.2f} em {total_vendas_segundo} vendas")
+    
+    if st.session_state.get("producao_facta_whatsapp", 0) > 0:
+        producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
+        total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
+        print(f"🔍 DEBUG - Usando valores reais da Facta WhatsApp: R$ {producao_novo:,.2f} em {total_vendas_novo} vendas")
+    else:
+        print(f"🔍 DEBUG - WhatsApp - Nenhum valor real da Facta encontrado, usando estimativas")
     
     # SALVAR MÉTRICAS NO BANCO DE DADOS - SISTEMA MELHORADO
     if HAS_DATABASE:
@@ -3245,77 +3297,7 @@ def main():
             import traceback
             traceback.print_exc()
     
-    # MOSTRAR RESUMO DETALHADO DOS RESULTADOS DA FACTA
-    st.markdown("---")
-    st.markdown("### 📊 Resumo Detalhado - Consultas Facta")
-    
-    # Resumo URA (4NET)
-    if st.session_state.get("producao_facta_ura", 0) > 0:
-        st.success(f"✅ **URA (4NET)**: R$ {st.session_state['producao_facta_ura']:,.2f} em {st.session_state['total_vendas_facta_ura']} vendas")
-    
-    # Resumo Kolmeya
-    if st.session_state.get("producao_facta_kolmeya", 0) > 0:
-        st.success(f"✅ **Kolmeya**: R$ {st.session_state['producao_facta_kolmeya']:,.2f} em {st.session_state['total_vendas_facta_kolmeya']} vendas")
-    
-    # Resumo WhatsApp
-    if st.session_state.get("producao_facta_whatsapp", 0) > 0:
-        st.success(f"✅ **WhatsApp**: R$ {st.session_state['producao_facta_whatsapp']:,.2f} em {st.session_state['total_vendas_facta_whatsapp']} vendas")
-    
-    # Resumo AD
-    if st.session_state.get("producao_facta_ad", 0) > 0:
-        st.success(f"✅ **AD**: R$ {st.session_state['producao_facta_ad']:,.2f} em {st.session_state['total_vendas_facta_ad']} vendas")
-    
-    # Total geral
-    total_geral_facta = (
-        st.session_state.get("producao_facta_ura", 0) +
-        st.session_state.get("producao_facta_kolmeya", 0) +
-        st.session_state.get("producao_facta_whatsapp", 0) +
-        st.session_state.get("producao_facta_ad", 0)
-    )
-    
-    if total_geral_facta > 0:
-        st.markdown(f"### 💰 **Total Geral Facta: R$ {total_geral_facta:,.2f}**")
-        
-        # Calcular comissão estimada (17.1%)
-        comissao_estimada = total_geral_facta * 0.171
-        st.info(f"💡 **Comissão Estimada (17.1%): R$ {comissao_estimada:,.2f}**")
-        
-        # Mostrar detalhes dos CPFs consultados (expandível)
-        with st.expander("🔍 Ver Detalhes dos CPFs Consultados"):
-            st.markdown("#### 📋 Resumo por Canal")
-            
-            # URA (4NET)
-            if st.session_state.get("producao_facta_ura", 0) > 0:
-                st.markdown(f"**URA (4NET)**:")
-                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_ura']:,.2f}")
-                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_ura']}")
-                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_ura'] / max(st.session_state['total_vendas_facta_ura'], 1):,.2f}")
-                st.markdown("---")
-            
-            # Kolmeya
-            if st.session_state.get("producao_facta_kolmeya", 0) > 0:
-                st.markdown(f"**Kolmeya**:")
-                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_kolmeya']:,.2f}")
-                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_kolmeya']}")
-                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_kolmeya'] / max(st.session_state['total_vendas_facta_kolmeya'], 1):,.2f}")
-                st.markdown("---")
-            
-            # WhatsApp
-            if st.session_state.get("producao_facta_whatsapp", 0) > 0:
-                st.markdown(f"**WhatsApp**:")
-                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_whatsapp']:,.2f}")
-                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_whatsapp']}")
-                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_whatsapp'] / max(st.session_state['total_vendas_facta_whatsapp'], 1):,.2f}")
-                st.markdown("---")
-            
-            # AD
-            if st.session_state.get("producao_facta_ad", 0) > 0:
-                st.markdown(f"**AD**:")
-                st.markdown(f"- Produção: R$ {st.session_state['producao_facta_ad']:,.2f}")
-                st.markdown(f"- Vendas: {st.session_state['total_vendas_facta_ad']}")
-                st.markdown(f"- Ticket médio: R$ {st.session_state['producao_facta_ad'] / max(st.session_state['total_vendas_facta_ad'], 1):,.2f}")
-    else:
-        st.warning("⚠️ Nenhum resultado encontrado na Facta para o período selecionado")
+
     
     # Dashboard HTML usando st.components.html para melhor renderização
     import streamlit.components.v1 as components
@@ -3440,7 +3422,7 @@ def main():
                     <div class="metric-value-small">{formatar_real(investimento)}</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-label">Taxa Entrega</div>
+                    <div class="metric-label">media por sms</div>
                     <div class="metric-value-small">{taxa_entrega:.1f}%</div>
                 </div>
             </div>
@@ -3485,21 +3467,21 @@ def main():
                             <div class="metric-row">
                     <div class="metric-item">
                         <div class="metric-label">Ligações</div>
-                        <div class="metric-value">{ligacoes_realizadas}</div>
+                        <div class="metric-value">0</div>
                     </div>
                     <div class="metric-item">
                         <div class="metric-label">Atendidas</div>
-                        <div class="metric-value">{total_atendidas}</div>
+                        <div class="metric-value">0</div>
                     </div>
                 </div>
                 <div class="metric-row">
                     <div class="metric-item">
                         <div class="metric-label">Investimento</div>
-                        <div class="metric-value-small">{formatar_real(total_investimento)}</div>
+                        <div class="metric-value-small">0,00</div>
                     </div>
                     <div class="metric-item">
                         <div class="metric-label">Taxa Ativação</div>
-                        <div class="metric-value-small">{taxa_ativacao:.1f}%</div>
+                        <div class="metric-value-small">0.0%</div>
                     </div>
                 </div>
             <div class="details-section">
@@ -3550,21 +3532,21 @@ def main():
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Mensagens enviadas</div>
-                    <div class="metric-value">{campanhas_realizadas}</div>
+                    <div class="metric-value">0</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-label">Interações</div>
-                    <div class="metric-value">{camp_atendidas:.1f}%</div>
+                    <div class="metric-value">0.0%</div>
                 </div>
             </div>
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Investimento</div>
-                    <div class="metric-value-small">{formatar_real(total_investimento_novo)}</div>
+                    <div class="metric-value-small">0,00</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-label">Tempo Médio</div>
-                    <div class="metric-value-small">{tempo_medio_campanha:.1f}h</div>
+                    <div class="metric-value-small">00:00h</div>
                 </div>
             </div>
             <div class="details-section">
@@ -3614,21 +3596,21 @@ def main():
             {f"""
             <div class="metric-row">
                 <div class="metric-item">
-                    <div class="metric-label">Ações</div>
+                    <div class="metric-label">o</div>
                     <div class="metric-value">{acoes_realizadas}</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-label">Efetivas</div>
+                    <div class="metric-label">0</div>
                     <div class="metric-value">{acoes_efetivas:.1f}%</div>
                 </div>
             </div>
             <div class="metric-row">
                 <div class="metric-item">
-                    <div class="metric-label">Investimento</div>
+                    <div class="metric-label">0,00</div>
                     <div class="metric-value-small">{formatar_real(total_investimento_segundo)}</div>
                 </div>
                 <div class="metric-item">
-                    <div class="metric-label">Tempo Médio</div>
+                    <div class="metric-label">0:00</div>
                     <div class="metric-value-small">{tempo_medio_acao:.1f}h</div>
                 </div>
             </div>
@@ -3676,6 +3658,17 @@ def main():
     """
     
     components.html(dashboard_html, height=800)
+    
+    # Debug final: Mostrar valores que estão sendo exibidos nos painéis
+    print(f"🔍 DEBUG FINAL - Valores exibidos nos painéis:")
+    print(f"   💰 Painel AD - Produção: R$ {producao_segundo:,.2f}")
+    print(f"   📈 Painel AD - Vendas: {total_vendas_segundo}")
+    print(f"   💰 Painel WhatsApp - Produção: R$ {producao_novo:,.2f}")
+    print(f"   📈 Painel WhatsApp - Vendas: {total_vendas_novo}")
+    print(f"   💰 Painel 4NET - Produção: R$ {producao_ura:,.2f}")
+    print(f"   📈 Painel 4NET - Vendas: {total_vendas_ura}")
+    print(f"   💰 Painel Kolmeya - Produção: R$ {producao:,.2f}")
+    print(f"   📈 Painel Kolmeya - Vendas: {total_vendas}")
     
     # Inicializar variáveis
     total_leads_gerados = 0
