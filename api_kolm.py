@@ -22,7 +22,7 @@ except ImportError:
     print("⚠️ Módulo de banco de dados não encontrado. As métricas não serão salvas.")
 
 try:
-    from streamlit_extras.streamlit_autorefresh import st_autorefresh
+
     HAS_AUTOREFRESH = True
 except ImportError:
     HAS_AUTOREFRESH = False
@@ -30,6 +30,9 @@ except ImportError:
 # Configuração da API Kolmeya
 
 KOLMEYA_TOKEN_DIRETO = ""  # Coloque seu token aqui para testes
+
+# Configuração da API FACTA
+FACTA_TOKEN_DIRETO = ""  # Coloque seu token aqui para testes
 
 # Função para obter o token da API
 def get_kolmeya_token():
@@ -65,15 +68,22 @@ def get_kolmeya_token():
     print("❌ Nenhum token do Kolmeya encontrado")
     return ""
 
-# Função para obter o token da API da Facta
+
+# Função para obter o token da API do FACTA
 def get_facta_token():
-    """Retorna o token da API da Facta."""
-    print(f"🔍 Buscando token da Facta...")
+    """Retorna o token da API do FACTA."""
+    print(f"🔍 Buscando token do FACTA...")
     
     # Primeiro tenta variável de ambiente
     token = os.environ.get("FACTA_TOKEN", "")
     if token:
-        print(f"✅ Token da Facta encontrado na variável de ambiente: {token[:10]}...")
+        print(f"✅ Token encontrado na variável de ambiente: {token[:10]}...")
+        return token
+    
+    # Se não encontrar, tenta configuração direta
+    if FACTA_TOKEN_DIRETO:
+        token = FACTA_TOKEN_DIRETO
+        print(f"⚠️ Usando token configurado diretamente no código: {token[:10]}...")
         return token
     
     # Se não encontrar, tenta ler do arquivo
@@ -81,17 +91,25 @@ def get_facta_token():
         with open("facta_token.txt", "r") as f:
             token = f.read().strip()
             if token and len(token) > 10:
+<<<<<<< HEAD
                 print(f"✅ Token da Facta lido do arquivo: {token[:10]}...")
                 return token
             else:
                 print(f"❌ Token da Facta no arquivo é inválido (muito curto ou vazio)")
+=======
+                print(f"✅ Token lido do arquivo facta_token.txt: {token[:10]}...")
+                return token
+            else:
+                print(f"❌ Token no arquivo facta_token.txt é inválido (muito curto ou vazio)")
+>>>>>>> c6ff9f3 (Atualização geral)
     except FileNotFoundError:
         print("❌ Arquivo facta_token.txt não encontrado")
     except Exception as e:
-        print(f"❌ Erro ao ler token da Facta: {e}")
+        print(f"❌ Erro ao ler token do arquivo: {e}")
     
-    print("❌ Nenhum token da Facta encontrado")
+    print("❌ Nenhum token do FACTA encontrado")
     return ""
+
 
 # Configurações
 CUSTO_POR_ENVIO = 0.08  # R$ 0,08 por SMS
@@ -283,18 +301,90 @@ def extrair_cpfs_kolmeya(messages):
     
     print(f"🔍 DEBUG - Extraindo CPFs do Kolmeya de {len(messages) if messages else 0} mensagens")
     
+<<<<<<< HEAD
     for msg in messages:
+=======
+    # Debug: Mostrar estrutura das primeiras mensagens
+    if messages and len(messages) > 0:
+        print(f"🔍 DEBUG - Estrutura da primeira mensagem:")
+        primeira_msg = messages[0]
+        if isinstance(primeira_msg, dict):
+            print(f"   📋 Campos disponíveis: {list(primeira_msg.keys())}")
+            print(f"   🆔 CPF: {primeira_msg.get('cpf', 'N/A')}")
+            print(f"   📱 Telefone: {primeira_msg.get('telefone', 'N/A')}")
+            print(f"   🏢 Centro de custo: {primeira_msg.get('centro_custo', 'N/A')}")
+            print(f"   📅 Enviada em: {primeira_msg.get('enviada_em', 'N/A')}")
+        
+        # Mostrar alguns exemplos de CPFs encontrados
+        print(f"🔍 DEBUG - Exemplos de CPFs nas mensagens:")
+        for i, msg in enumerate(messages[:10]):  # Primeiras 10 mensagens
+            if isinstance(msg, dict):
+                cpf = msg.get('cpf')
+                telefone = msg.get('telefone', 'N/A')
+                print(f"   Mensagem {i+1}: CPF={cpf}, Telefone={telefone}")
+    
+    cpfs_validos = 0
+    cpfs_invalidos = 0
+    mensagens_sem_cpf = 0
+    
+    for i, msg in enumerate(messages):
+>>>>>>> c6ff9f3 (Atualização geral)
         if isinstance(msg, dict):
             # Campo 'cpf' da nova API
-            if 'cpf' in msg and msg['cpf'] is not None:
-                valor_str = str(msg['cpf']).strip()
+            cpf = msg.get('cpf')
+            
+            # CORREÇÃO: Aceitar CPFs mesmo que não passem na validação rigorosa
+            if cpf and cpf != 0:  # CPF 0 é inválido
+                valor_str = str(cpf).strip()
                 
-                # Usar a nova função de limpeza de CPF
+                # Limpar CPF
                 cpf_limpo = limpar_cpf(valor_str)
+<<<<<<< HEAD
                 if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
                     cpfs.add(cpf_limpo)
                     if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
                         print(f"   ✅ CPF extraído: {cpf_limpo}")
+=======
+                
+                # Verificar se tem pelo menos 11 dígitos
+                if cpf_limpo and len(cpf_limpo) == 11:
+                    # Tentar validar, mas aceitar mesmo se não passar na validação rigorosa
+                    if validar_cpf(cpf_limpo):
+                        cpfs.add(cpf_limpo)
+                        cpfs_validos += 1
+                        if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                            print(f"   ✅ CPF extraído (válido): {cpf_limpo}")
+                    else:
+                        # CPF tem 11 dígitos mas não passa na validação - aceitar mesmo assim
+                        cpfs.add(cpf_limpo)
+                        cpfs_validos += 1
+                        if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                            print(f"   ⚠️ CPF extraído (aceito): {cpf_limpo} (não passou na validação rigorosa)")
+                else:
+                    cpfs_invalidos += 1
+                    if cpfs_invalidos <= 3:  # Mostrar apenas os primeiros 3 para debug
+                        print(f"   ❌ CPF inválido (formato): {cpf} -> {cpf_limpo}")
+            else:
+                mensagens_sem_cpf += 1
+                if mensagens_sem_cpf <= 3:  # Mostrar apenas os primeiros 3 para debug
+                    print(f"   ⚠️ Mensagem sem CPF válido: {msg.get('telefone', 'N/A')} - CPF: {cpf}")
+        
+        # Mostrar progresso a cada 1000 mensagens processadas
+        if (i + 1) % 1000 == 0:
+            print(f"   📊 Progresso: {i + 1}/{len(messages)} mensagens processadas")
+    
+    print(f"🔍 DEBUG - Resumo da extração de CPFs das mensagens:")
+    print(f"   📊 Total de mensagens processadas: {len(messages)}")
+    print(f"   ✅ CPFs válidos extraídos: {cpfs_validos}")
+    print(f"   ❌ CPFs inválidos encontrados: {cpfs_invalidos}")
+    print(f"   ⚠️ Mensagens sem CPF: {mensagens_sem_cpf}")
+    print(f"   📋 CPFs únicos finais: {len(cpfs)}")
+    
+    if cpfs:
+        print(f"   📋 Primeiros 5 CPFs de mensagens: {list(cpfs)[:5]}")
+        if len(cpfs) > 5:
+            print(f"   📋 Últimos 5 CPFs de mensagens: {list(cpfs)[-5:]}")
+>>>>>>> c6ff9f3 (Atualização geral)
     
     print(f"🔍 DEBUG - Total de CPFs extraídos do Kolmeya: {len(cpfs)}")
     return cpfs
@@ -367,7 +457,7 @@ def extrair_cpfs_da_base(df, data_ini=None, data_fim=None):
                 # Usar a nova função de limpeza de CPF
                 cpf_limpo = limpar_cpf(valor_str)
                 if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                        cpfs.add(cpf_limpo)
+                    cpfs.add(cpf_limpo)
     
     return cpfs
 
@@ -885,6 +975,29 @@ def extrair_cpfs_acessos_kolmeya(accesses):
     
     print(f"🔍 DEBUG - Extraindo CPFs dos acessos do Kolmeya de {len(accesses)} acessos")
     
+<<<<<<< HEAD
+=======
+    # Debug: Mostrar estrutura dos primeiros acessos
+    if accesses and len(accesses) > 0:
+        print(f"🔍 DEBUG - Estrutura do primeiro acesso:")
+        primeiro_acesso = accesses[0]
+        if isinstance(primeiro_acesso, dict):
+            print(f"   📋 Campos disponíveis: {list(primeiro_acesso.keys())}")
+            print(f"   🆔 CPF: {primeiro_acesso.get('cpf', 'N/A')}")
+            print(f"   👤 Nome: {primeiro_acesso.get('name', 'N/A')}")
+            print(f"   📱 Telefone: {primeiro_acesso.get('fullphone', 'N/A')}")
+            print(f"   🏢 Centro de custo: {primeiro_acesso.get('tenant_segment_id', 'N/A')}")
+            print(f"   📅 Acessado em: {primeiro_acesso.get('accessed_at', 'N/A')}")
+        
+        # Mostrar alguns exemplos de CPFs encontrados
+        print(f"🔍 DEBUG - Exemplos de CPFs nos acessos:")
+        for i, acesso in enumerate(accesses[:10]):  # Primeiros 10 acessos
+            if isinstance(acesso, dict):
+                cpf = acesso.get('cpf')
+                nome = acesso.get('name', 'N/A')
+                print(f"   Acesso {i+1}: CPF={cpf}, Nome={nome}")
+    
+>>>>>>> c6ff9f3 (Atualização geral)
     cpfs_validos = 0
     cpfs_invalidos = 0
     acessos_sem_cpf = 0
@@ -893,6 +1006,7 @@ def extrair_cpfs_acessos_kolmeya(accesses):
         if isinstance(acesso, dict):
             # Extrair CPF do campo 'cpf' (conforme documentação da API)
             cpf = acesso.get('cpf')
+<<<<<<< HEAD
             if cpf and cpf != 0:  # CPF 0 é inválido
                 # Limpar e validar CPF
                 cpf_limpo = limpar_cpf(str(cpf))
@@ -907,6 +1021,36 @@ def extrair_cpfs_acessos_kolmeya(accesses):
                     cpfs_invalidos += 1
                     if cpfs_invalidos <= 3:  # Mostrar apenas os primeiros 3 para debug
                         print(f"   ❌ CPF de acesso inválido: {cpf} -> {cpf_limpo}")
+=======
+            
+            # CORREÇÃO: Aceitar CPFs mesmo que não passem na validação rigorosa
+            if cpf and cpf != 0:  # CPF 0 é inválido
+                # Limpar CPF
+                cpf_limpo = limpar_cpf(str(cpf))
+                
+                # Verificar se tem pelo menos 11 dígitos
+                if cpf_limpo and len(cpf_limpo) == 11:
+                    # Tentar validar, mas aceitar mesmo se não passar na validação rigorosa
+                    if validar_cpf(cpf_limpo):
+                        cpfs.add(cpf_limpo)
+                        cpfs_validos += 1
+                        if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                            print(f"   ✅ CPF de acesso extraído (válido): {cpf_limpo}")
+                            print(f"      📱 Telefone: {acesso.get('fullphone', 'N/A')}")
+                            print(f"      👤 Nome: {acesso.get('name', 'N/A')}")
+                    else:
+                        # CPF tem 11 dígitos mas não passa na validação - aceitar mesmo assim
+                        cpfs.add(cpf_limpo)
+                        cpfs_validos += 1
+                        if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                            print(f"   ⚠️ CPF de acesso extraído (aceito): {cpf_limpo} (não passou na validação rigorosa)")
+                            print(f"      📱 Telefone: {acesso.get('fullphone', 'N/A')}")
+                            print(f"      👤 Nome: {acesso.get('name', 'N/A')}")
+                else:
+                    cpfs_invalidos += 1
+                    if cpfs_invalidos <= 3:  # Mostrar apenas os primeiros 3 para debug
+                        print(f"   ❌ CPF de acesso inválido (formato): {cpf} -> {cpf_limpo}")
+>>>>>>> c6ff9f3 (Atualização geral)
             else:
                 acessos_sem_cpf += 1
                 if acessos_sem_cpf <= 3:  # Mostrar apenas os primeiros 3 para debug
@@ -932,6 +1076,799 @@ def extrair_cpfs_acessos_kolmeya(accesses):
     
     return cpfs
 
+<<<<<<< HEAD
+=======
+def testar_acessos_kolmeya(token=None, start_at=None, end_at=None, tenant_segment_id=None):
+    """
+    Função para testar especificamente a consulta de acessos do Kolmeya.
+    
+    Args:
+        token: Token do Kolmeya
+        start_at: Data inicial (YYYY-MM-DD)
+        end_at: Data final (YYYY-MM-DD)
+        tenant_segment_id: Centro de custo (opcional)
+    
+    Returns:
+        Lista de acessos encontrados
+    """
+    if token is None:
+        token = get_kolmeya_token()
+    
+    if not token:
+        print("❌ Token do Kolmeya não encontrado para teste")
+        return []
+    
+    # Usar datas padrão se não fornecidas
+    if not start_at:
+        start_at = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    if not end_at:
+        end_at = datetime.now().strftime('%Y-%m-%d')
+    
+    print(f"🧪 Testando consulta de acessos do Kolmeya:")
+    print(f"   📅 Período: {start_at} a {end_at}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    print(f"   🔑 Token: {token[:10]}...")
+    
+    # Consultar acessos
+    acessos = consultar_acessos_sms_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=5000,
+        token=token,
+        tenant_segment_id=tenant_segment_id
+    )
+    
+    if acessos:
+        print(f"✅ Acessos encontrados: {len(acessos)}")
+        
+        # Extrair CPFs
+        cpfs = extrair_cpfs_acessos_kolmeya(acessos)
+        print(f"✅ CPFs únicos extraídos: {len(cpfs)}")
+        
+        # Mostrar alguns CPFs
+        if cpfs:
+            print(f"📋 Primeiros 10 CPFs encontrados:")
+            for i, cpf in enumerate(list(cpfs)[:10]):
+                print(f"   {i+1}. {cpf}")
+        
+        return acessos
+    else:
+        print("❌ Nenhum acesso encontrado")
+        return []
+
+def consultar_andamento_propostas_facta(cpfs, token=None, ambiente="homologacao"):
+    """
+    Consulta o andamento de propostas no FACTA para os CPFs fornecidos.
+    
+    Args:
+        cpfs: Lista de CPFs para consultar
+        token: Token de autenticação do FACTA
+        ambiente: "homologacao" ou "producao"
+    
+    Returns:
+        Lista de propostas encontradas com seus valores AF
+    """
+    if not cpfs:
+        print("❌ Nenhum CPF fornecido para consulta")
+        return []
+    
+    if token is None:
+        token = get_facta_token()
+    
+    if not token:
+        print("❌ Token do FACTA não encontrado")
+        print("   💡 Verifique se o token está configurado em:")
+        print("      - Variável de ambiente: FACTA_TOKEN")
+        print("      - Arquivo: facta_token.txt")
+        print("      - Configuração direta: FACTA_TOKEN_DIRETO")
+        return []
+    
+    # Verificar se o token tem formato válido
+    if len(token) < 10:
+        print("❌ Token do FACTA parece inválido (muito curto)")
+        return []
+    
+    # Definir URL base conforme ambiente
+    if ambiente.lower() == "producao":
+        base_url = "https://webservice.facta.com.br"
+    else:
+        base_url = "https://webservice-homol.facta.com.br"
+    
+    url = f"{base_url}/proposta/andamento-propostas"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    print(f"🔍 DEBUG - Consultando FACTA Andamento de Propostas:")
+    print(f"   🌐 URL: {url}")
+    print(f"   🔑 Token: {token[:10]}...")
+    print(f"   📊 CPFs para consulta: {len(cpfs)}")
+    print(f"   🏢 Ambiente: {ambiente}")
+    
+    todas_propostas = []
+    
+    # Processar CPFs em lotes para evitar timeout
+    lote_size = 10  # Consultar 10 CPFs por vez
+    for i in range(0, len(cpfs), lote_size):
+        lote_cpfs = list(cpfs)[i:i+lote_size]
+        print(f"   📋 Processando lote {i//lote_size + 1}: CPFs {i+1}-{min(i+lote_size, len(cpfs))}")
+        
+        for cpf in lote_cpfs:
+            try:
+                # Parâmetros da consulta - CORREÇÃO: Remover filtros desnecessários
+                params = {
+                    "cpf": cpf,
+                    "quantidade": 5000  # Máximo de registros por página
+                }
+                
+                
+                
+                print(f"      🔍 Consultando CPF: {cpf}")
+                print(f"      📋 Parâmetros: {params}")
+                
+                response = requests.get(url, headers=headers, params=params, timeout=30)
+                print(f"      📊 Status Code: {response.status_code}")
+                
+                response.raise_for_status()
+                
+                data = response.json()
+                print(f"      📄 Resposta FACTA: {data}")
+                
+                # CORREÇÃO: Verificar se não há erro (erro = false significa sucesso)
+                if not data.get("erro", False):
+                    propostas = data.get("propostas", [])
+                    if propostas:
+                        print(f"      ✅ CPF {cpf}: {len(propostas)} propostas encontradas")
+                        
+                        for proposta in propostas:
+                            # Extrair informações relevantes
+                            proposta_info = {
+                                "cpf": cpf,
+                                "cliente": proposta.get("cliente", ""),
+                                "codigo_af": proposta.get("codigo_af", ""),
+                                "valor_af": proposta.get("valor_af", 0),
+                                "status_proposta": proposta.get("status_proposta", ""),
+                                "data_movimento": proposta.get("data_movimento", ""),
+                                "convenio": proposta.get("convenio", ""),
+                                "averbador": proposta.get("averbador", ""),
+                                "produto": proposta.get("produto", ""),
+                                "valor_bruto": proposta.get("valor_bruto", 0),
+                                "saldo_devedor": proposta.get("saldo_devedor", 0)
+                            }
+                            todas_propostas.append(proposta_info)
+                    else:
+                        print(f"      ⚠️ CPF {cpf}: Nenhuma proposta encontrada")
+                else:
+                    print(f"      ❌ CPF {cpf}: Erro na consulta - {data.get('mensagem', 'Erro desconhecido')}")
+                
+                # Pequena pausa entre consultas para não sobrecarregar a API
+                time.sleep(0.5)
+                
+            except requests.exceptions.RequestException as e:
+                print(f"      ❌ Erro na requisição para CPF {cpf}: {e}")
+            except Exception as e:
+                print(f"      ❌ Erro inesperado para CPF {cpf}: {e}")
+    
+    print(f"✅ FACTA Andamento de Propostas - {len(todas_propostas)} propostas encontradas")
+    
+    # Resumo dos valores AF
+    if todas_propostas:
+        valores_af = [p.get("valor_af", 0) for p in todas_propostas if p.get("valor_af", 0) > 0]
+        if valores_af:
+            print(f"   📊 Total de propostas com valor AF: {len(valores_af)}")
+            print(f"   💰 Soma dos valores AF: R$ {sum(valores_af):,.2f}")
+            print(f"   📈 Maior valor AF: R$ {max(valores_af):,.2f}")
+            print(f"   📉 Menor valor AF: R$ {min(valores_af):,.2f}")
+    
+    return todas_propostas
+
+def consultar_todas_propostas_facta(token=None, ambiente="homologacao", data_ini=None, data_fim=None):
+    """
+    Consulta TODAS as propostas no FACTA sem filtro de CPF específico.
+    
+    Args:
+        token: Token de autenticação do FACTA
+        ambiente: "homologacao" ou "producao"
+        data_ini: Data inicial (opcional)
+        data_fim: Data final (opcional)
+    
+    Returns:
+        Lista de todas as propostas encontradas
+    """
+    if token is None:
+        token = get_facta_token()
+    
+    if not token:
+        print("❌ Token do FACTA não encontrado")
+        return []
+    
+    # Definir URL base conforme ambiente
+    if ambiente.lower() == "producao":
+        base_url = "https://webservice.facta.com.br"
+    else:
+        base_url = "https://webservice-homol.facta.com.br"
+    
+    url = f"{base_url}/proposta/andamento-propostas"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    print(f"🔍 DEBUG - Consultando TODAS as propostas FACTA:")
+    print(f"   🌐 URL: {url}")
+    print(f"   🔑 Token: {token[:10]}...")
+    print(f"   🏢 Ambiente: {ambiente}")
+    print(f"   📅 Período: {data_ini} a {data_fim}")
+    
+    todas_propostas = []
+    pagina = 1
+    
+    while True:
+        try:
+            # Parâmetros da consulta - SEM filtro de CPF
+            params = {
+                "quantidade": 5000,  # Máximo de registros por página
+                "pagina": pagina
+            }
+            
+            # Adicionar filtros de data se fornecidos
+            if data_ini:
+                params["data_ini"] = data_ini.strftime('%d/%m/%Y')
+            if data_fim:
+                params["data_fim"] = data_fim.strftime('%d/%m/%Y')
+            
+            print(f"   📋 Consultando página {pagina}...")
+            print(f"   📋 Parâmetros: {params}")
+            
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            print(f"   📊 Status Code: {response.status_code}")
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Verificar se não há erro
+            if not data.get("erro", False):
+                propostas = data.get("propostas", [])
+                if propostas:
+                    print(f"   ✅ Página {pagina}: {len(propostas)} propostas encontradas")
+                    
+                    for proposta in propostas:
+                        # Extrair informações relevantes
+                        proposta_info = {
+                            "cpf": proposta.get("cpf", ""),
+                            "cliente": proposta.get("cliente", ""),
+                            "codigo_af": proposta.get("codigo_af", ""),
+                            "valor_af": proposta.get("valor_af", 0),
+                            "status_proposta": proposta.get("status_proposta", ""),
+                            "data_movimento": proposta.get("data_movimento", ""),
+                            "convenio": proposta.get("convenio", ""),
+                            "averbador": proposta.get("averbador", ""),
+                            "produto": proposta.get("produto", ""),
+                            "valor_bruto": proposta.get("valor_bruto", 0),
+                            "saldo_devedor": proposta.get("saldo_devedor", 0)
+                        }
+                        todas_propostas.append(proposta_info)
+                    
+                    # Se retornou menos que o máximo, chegou ao fim
+                    if len(propostas) < 5000:
+                        print(f"   ✅ Última página alcançada (menos de 5000 registros)")
+                        break
+                    
+                    pagina += 1
+                else:
+                    print(f"   ⚠️ Página {pagina}: Nenhuma proposta encontrada")
+                    break
+            else:
+                print(f"   ❌ Página {pagina}: Erro na consulta - {data.get('mensagem', 'Erro desconhecido')}")
+                break
+            
+            # Pequena pausa entre páginas
+            time.sleep(0.5)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"   ❌ Erro na requisição da página {pagina}: {e}")
+            break
+        except Exception as e:
+            print(f"   ❌ Erro inesperado na página {pagina}: {e}")
+            break
+    
+    print(f"✅ FACTA Todas as Propostas - {len(todas_propostas)} propostas encontradas")
+    
+    # Resumo dos valores AF
+    if todas_propostas:
+        valores_af = [p.get("valor_af", 0) for p in todas_propostas if p.get("valor_af", 0) > 0]
+        if valores_af:
+            print(f"   📊 Total de propostas com valor AF: {len(valores_af)}")
+            print(f"   💰 Soma dos valores AF: R$ {sum(valores_af):,.2f}")
+            print(f"   📈 Maior valor AF: R$ {max(valores_af):,.2f}")
+            print(f"   📉 Menor valor AF: R$ {min(valores_af):,.2f}")
+    
+    return todas_propostas
+
+def testar_api_facta(token=None, ambiente="homologacao"):
+    """
+    Função para testar a conectividade com a API FACTA.
+    
+    Args:
+        token: Token de autenticação do FACTA
+        ambiente: "homologacao" ou "producao"
+    
+    Returns:
+        True se a API estiver funcionando, False caso contrário
+    """
+    if token is None:
+        token = get_facta_token()
+    
+    if not token:
+        print("❌ Token do FACTA não encontrado para teste")
+        return False
+    
+    # Definir URL base conforme ambiente
+    if ambiente.lower() == "producao":
+        base_url = "https://webservice.facta.com.br"
+    else:
+        base_url = "https://webservice-homol.facta.com.br"
+    
+    url = f"{base_url}/proposta/andamento-propostas"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Parâmetros de teste (consulta vazia para testar conectividade)
+    params = {
+        "convenio": 3,
+        "consulta_sub": "N",
+        "quantidade": 1
+    }
+    
+    print(f"🧪 Testando conectividade com API FACTA:")
+    print(f"   🌐 URL: {url}")
+    print(f"   🔑 Token: {token[:10]}...")
+    print(f"   🏢 Ambiente: {ambiente}")
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        print(f"   📊 Status Code: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"   ✅ API FACTA respondendo corretamente")
+            print(f"   📄 Resposta: {data}")
+            return True
+        elif response.status_code == 401:
+            print(f"   ❌ Erro 401: Token inválido ou expirado")
+            return False
+        elif response.status_code == 403:
+            print(f"   ❌ Erro 403: Acesso negado")
+            return False
+        else:
+            print(f"   ❌ Erro HTTP {response.status_code}: {response.text}")
+            return False
+            
+    except requests.exceptions.Timeout:
+        print("   ❌ Timeout na requisição de teste")
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"   ❌ Erro na requisição de teste: {e}")
+        return False
+    except Exception as e:
+        print(f"   ❌ Erro inesperado no teste: {e}")
+        return False
+
+def consultar_cpfs_diretamente_kolmeya(start_at, end_at, limit=30000, token=None, tenant_segment_id=None):
+    """
+    Consulta diretamente o endpoint de status de SMS do Kolmeya e extrai CPFs.
+    
+    Args:
+        start_at: Data inicial (YYYY-MM-DD HH:MM)
+        end_at: Data final (YYYY-MM-DD HH:MM)
+        limit: Limite de mensagens a consultar
+        token: Token do Kolmeya
+        tenant_segment_id: Centro de custo (opcional)
+    
+    Returns:
+        Lista de CPFs únicos encontrados
+    """
+    if token is None:
+        token = get_kolmeya_token()
+    
+    if not token:
+        print("❌ Token do Kolmeya não encontrado")
+        return []
+    
+    # Verificar se o token tem formato válido
+    if len(token) < 10:
+        print("❌ Token do Kolmeya parece inválido (muito curto)")
+        return []
+    
+    url = "https://kolmeya.com.br/api/v1/sms/reports/statuses"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    body = {
+        "start_at": start_at,
+        "end_at": end_at,
+        "limit": min(limit, 30000)  # Máximo permitido pela API
+    }
+    
+    print(f"🔍 DEBUG - Consultando CPFs diretamente do endpoint de status:")
+    print(f"   🌐 URL: {url}")
+    print(f"   📅 Período: {start_at} a {end_at}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    print(f"   📋 Request body: {body}")
+    
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=60)
+        
+        print(f"   📊 Status Code: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            messages = data.get("messages", [])
+            
+            print(f"✅ Resposta recebida: {len(messages)} mensagens")
+            
+            # Debug da primeira mensagem
+            if messages and len(messages) > 0:
+                primeira_msg = messages[0]
+                print(f"🔍 DEBUG - Estrutura da primeira mensagem:")
+                print(f"   📋 Campos disponíveis: {list(primeira_msg.keys())}")
+                print(f"   🆔 CPF: {primeira_msg.get('cpf', 'N/A')}")
+                print(f"   📱 Telefone: {primeira_msg.get('telefone', 'N/A')}")
+                print(f"   🏢 Centro de custo: {primeira_msg.get('centro_custo', 'N/A')}")
+                print(f"   📅 Enviada em: {primeira_msg.get('enviada_em', 'N/A')}")
+            
+            # Extrair CPFs das mensagens
+            cpfs = set()
+            cpfs_validos = 0
+            cpfs_invalidos = 0
+            mensagens_sem_cpf = 0
+            
+            for i, msg in enumerate(messages):
+                if isinstance(msg, dict):
+                    # Campo 'cpf' da API
+                    cpf = msg.get('cpf')
+                    
+                    # CORREÇÃO: Aceitar CPFs mesmo que não passem na validação rigorosa
+                    if cpf and cpf != 0:  # CPF 0 é inválido
+                        valor_str = str(cpf).strip()
+                        
+                        # Limpar CPF
+                        cpf_limpo = limpar_cpf(valor_str)
+                        
+                        # Verificar se tem pelo menos 11 dígitos
+                        if cpf_limpo and len(cpf_limpo) == 11:
+                            # Tentar validar, mas aceitar mesmo se não passar na validação rigorosa
+                            if validar_cpf(cpf_limpo):
+                                cpfs.add(cpf_limpo)
+                                cpfs_validos += 1
+                                if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                                    print(f"   ✅ CPF extraído (válido): {cpf_limpo}")
+                            else:
+                                # CPF tem 11 dígitos mas não passa na validação - aceitar mesmo assim
+                                cpfs.add(cpf_limpo)
+                                cpfs_validos += 1
+                                if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                                    print(f"   ⚠️ CPF extraído (aceito): {cpf_limpo} (não passou na validação rigorosa)")
+                        else:
+                            cpfs_invalidos += 1
+                            if cpfs_invalidos <= 3:  # Mostrar apenas os primeiros 3 para debug
+                                print(f"   ❌ CPF inválido (formato): {cpf} -> {cpf_limpo}")
+                    else:
+                        mensagens_sem_cpf += 1
+                        if mensagens_sem_cpf <= 3:  # Mostrar apenas os primeiros 3 para debug
+                            print(f"   ⚠️ Mensagem sem CPF válido: {msg.get('telefone', 'N/A')} - CPF: {cpf}")
+                
+                # Mostrar progresso a cada 1000 mensagens processadas
+                if (i + 1) % 1000 == 0:
+                    print(f"   📊 Progresso: {i + 1}/{len(messages)} mensagens processadas")
+            
+            print(f"🔍 DEBUG - Resumo da extração de CPFs do endpoint:")
+            print(f"   📊 Total de mensagens processadas: {len(messages)}")
+            print(f"   ✅ CPFs válidos extraídos: {cpfs_validos}")
+            print(f"   ❌ CPFs inválidos encontrados: {cpfs_invalidos}")
+            print(f"   ⚠️ Mensagens sem CPF: {mensagens_sem_cpf}")
+            print(f"   📋 CPFs únicos finais: {len(cpfs)}")
+            
+            if cpfs:
+                print(f"   📋 Primeiros 5 CPFs: {list(cpfs)[:5]}")
+                if len(cpfs) > 5:
+                    print(f"   📋 Últimos 5 CPFs: {list(cpfs)[-5:]}")
+            
+            return list(cpfs)
+            
+        elif resp.status_code == 401:
+            print(f"   ❌ Erro 401: Token inválido ou expirado")
+            return []
+        elif resp.status_code == 403:
+            print(f"   ❌ Erro 403: Acesso negado")
+            return []
+        else:
+            print(f"   ❌ Erro HTTP {resp.status_code}: {resp.text}")
+            return []
+            
+    except requests.exceptions.Timeout:
+        print("   ❌ Timeout na requisição")
+        return []
+    except requests.exceptions.RequestException as e:
+        print(f"   ❌ Erro na requisição: {e}")
+        return []
+    except Exception as e:
+        print(f"   ❌ Erro inesperado: {e}")
+        return []
+
+def consultar_andamento_propostas_por_endpoint_direto(start_at, end_at, limit=30000, token_kolmeya=None, token_facta=None, ambiente_facta="homologacao", tenant_segment_id=None):
+    """
+    Consulta diretamente o endpoint de status do Kolmeya e depois consulta propostas do FACTA.
+    
+    Args:
+        start_at: Data inicial (YYYY-MM-DD)
+        end_at: Data final (YYYY-MM-DD)
+        limit: Limite de mensagens a consultar
+        token_kolmeya: Token do Kolmeya
+        token_facta: Token do FACTA
+        ambiente_facta: Ambiente do FACTA ("homologacao" ou "producao")
+        tenant_segment_id: Centro de custo do Kolmeya
+    
+    Returns:
+        Dicionário com CPFs e propostas encontradas
+    """
+    print(f"🚀 Iniciando consulta integrada Kolmeya (ENDPOINT DIRETO) + FACTA")
+    print(f"   📅 Período: {start_at} até {end_at}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    
+    # Obter tokens se não fornecidos
+    if token_kolmeya is None:
+        token_kolmeya = get_kolmeya_token()
+    
+    if token_facta is None:
+        token_facta = get_facta_token()
+    
+    # 1. Consultar CPFs diretamente do endpoint de status
+    print(f"\n📱 Passo 1: Consultando CPFs diretamente do endpoint de status...")
+    
+    # Formatar datas para o formato esperado pela API (YYYY-MM-DD HH:MM)
+    start_at_formatted = f"{start_at} 00:00"
+    end_at_formatted = f"{end_at} 23:59"
+    
+    cpfs = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at_formatted,
+        end_at=end_at_formatted,
+        limit=limit,
+        token=token_kolmeya,
+        tenant_segment_id=tenant_segment_id
+    )
+    
+    if not cpfs:
+        print("❌ Nenhum CPF encontrado. Finalizando consulta.")
+        return {
+            "cpfs": [],
+            "propostas": [],
+            "cpfs_encontrados": 0,
+            "propostas_encontradas": 0
+        }
+    
+    # 2. Testar conectividade com FACTA antes de consultar
+    print(f"\n🧪 Passo 2: Testando conectividade com API FACTA...")
+    if not testar_api_facta(token=token_facta, ambiente=ambiente_facta):
+        print("❌ API FACTA não está respondendo. Finalizando consulta.")
+        return {
+            "cpfs": cpfs,
+            "propostas": [],
+            "cpfs_encontrados": len(cpfs),
+            "propostas_encontradas": 0
+        }
+    
+    # 3. Consultar propostas do FACTA
+    print(f"\n📋 Passo 3: Consultando propostas do FACTA...")
+    propostas = consultar_andamento_propostas_facta(
+        cpfs=set(cpfs),  # Converter para set
+        token=token_facta,
+        ambiente=ambiente_facta
+    )
+    
+    # 4. Resumo final
+    print(f"\n✅ Consulta integrada finalizada:")
+    print(f"   🆔 CPFs únicos encontrados: {len(cpfs)}")
+    print(f"   📋 Propostas encontradas: {len(propostas)}")
+    
+    return {
+        "cpfs": cpfs,
+        "propostas": propostas,
+        "cpfs_encontrados": len(cpfs),
+        "propostas_encontradas": len(propostas)
+    }
+
+def consultar_andamento_propostas_por_envios(start_at, end_at, limit=5000, token_kolmeya=None, token_facta=None, ambiente_facta="homologacao", tenant_segment_id=None):
+    """
+    Consulta mensagens enviadas do Kolmeya e depois consulta propostas do FACTA para os CPFs encontrados.
+    
+    Args:
+        start_at: Data inicial (YYYY-MM-DD)
+        end_at: Data final (YYYY-MM-DD)
+        limit: Limite de mensagens a consultar
+        token_kolmeya: Token do Kolmeya
+        token_facta: Token do FACTA
+        ambiente_facta: Ambiente do FACTA ("homologacao" ou "producao")
+        tenant_segment_id: Centro de custo do Kolmeya
+    
+    Returns:
+        Dicionário com mensagens e propostas encontradas
+    """
+    print(f"🚀 Iniciando consulta integrada Kolmeya (ENVIOS) + FACTA")
+    print(f"   📅 Período: {start_at} até {end_at}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    
+    # Obter tokens se não fornecidos
+    if token_kolmeya is None:
+        token_kolmeya = get_kolmeya_token()
+    
+    if token_facta is None:
+        token_facta = get_facta_token()
+    
+    # 1. Consultar mensagens enviadas do Kolmeya
+    print(f"\n📱 Passo 1: Consultando mensagens enviadas do Kolmeya...")
+    messages, total_acessos = obter_dados_sms_com_filtro(
+        data_ini=datetime.strptime(start_at, '%Y-%m-%d').date(),
+        data_fim=datetime.strptime(end_at, '%Y-%m-%d').date(),
+        tenant_segment_id=tenant_segment_id
+    )
+    
+    if not messages:
+        print("❌ Nenhuma mensagem encontrada. Finalizando consulta.")
+        return {
+            "mensagens": [],
+            "propostas": [],
+            "cpfs_encontrados": 0,
+            "propostas_encontradas": 0
+        }
+    
+    # 2. Extrair CPFs das mensagens enviadas
+    print(f"\n🆔 Passo 2: Extraindo CPFs das mensagens enviadas...")
+    cpfs = extrair_cpfs_kolmeya(messages)
+    
+    if not cpfs:
+        print("❌ Nenhum CPF válido encontrado nas mensagens. Finalizando consulta.")
+        return {
+            "mensagens": messages,
+            "propostas": [],
+            "cpfs_encontrados": 0,
+            "propostas_encontradas": 0
+        }
+    
+    # 3. Testar conectividade com FACTA antes de consultar
+    print(f"\n🧪 Passo 3a: Testando conectividade com API FACTA...")
+    if not testar_api_facta(token=token_facta, ambiente=ambiente_facta):
+        print("❌ API FACTA não está respondendo. Finalizando consulta.")
+        return {
+            "mensagens": messages,
+            "propostas": [],
+            "cpfs_encontrados": len(cpfs),
+            "propostas_encontradas": 0
+        }
+    
+    # 4. Consultar propostas do FACTA
+    print(f"\n📋 Passo 4: Consultando propostas do FACTA...")
+    propostas = consultar_andamento_propostas_facta(
+        cpfs=cpfs,
+        token=token_facta,
+        ambiente=ambiente_facta
+    )
+    
+    # 5. Resumo final
+    print(f"\n✅ Consulta integrada finalizada:")
+    print(f"   📱 Mensagens encontradas: {len(messages)}")
+    print(f"   🆔 CPFs únicos: {len(cpfs)}")
+    print(f"   📋 Propostas encontradas: {len(propostas)}")
+    
+    return {
+        "mensagens": messages,
+        "propostas": propostas,
+        "cpfs_encontrados": len(cpfs),
+        "propostas_encontradas": len(propostas)
+    }
+
+def consultar_andamento_propostas_por_acessos(start_at, end_at, limit=5000, token_kolmeya=None, token_facta=None, ambiente_facta="homologacao", tenant_segment_id=None):
+    """
+    Consulta acessos do Kolmeya e depois consulta propostas do FACTA para os CPFs encontrados.
+    
+    Args:
+        start_at: Data inicial (YYYY-MM-DD)
+        end_at: Data final (YYYY-MM-DD)
+        limit: Limite de acessos a consultar
+        token_kolmeya: Token do Kolmeya
+        token_facta: Token do FACTA
+        ambiente_facta: Ambiente do FACTA ("homologacao" ou "producao")
+        tenant_segment_id: Centro de custo do Kolmeya
+    
+    Returns:
+        Dicionário com acessos e propostas encontradas
+    """
+    print(f"🚀 Iniciando consulta integrada Kolmeya + FACTA")
+    print(f"   📅 Período: {start_at} até {end_at}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    
+    # Obter tokens se não fornecidos
+    if token_kolmeya is None:
+        token_kolmeya = get_kolmeya_token()
+    
+    if token_facta is None:
+        token_facta = get_facta_token()
+    
+    # 1. Consultar acessos do Kolmeya
+    print(f"\n📱 Passo 1: Consultando acessos do Kolmeya...")
+    acessos = consultar_acessos_sms_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=limit,
+        token=token_kolmeya,
+        tenant_segment_id=tenant_segment_id
+    )
+    
+    if not acessos:
+        print("❌ Nenhum acesso encontrado. Finalizando consulta.")
+        return {
+            "acessos": [],
+            "propostas": [],
+            "cpfs_encontrados": 0,
+            "propostas_encontradas": 0
+        }
+    
+    # 2. Extrair CPFs dos acessos
+    print(f"\n🆔 Passo 2: Extraindo CPFs dos acessos...")
+    cpfs = extrair_cpfs_acessos_kolmeya(acessos)
+    
+    if not cpfs:
+        print("❌ Nenhum CPF válido encontrado nos acessos. Finalizando consulta.")
+        return {
+            "acessos": acessos,
+            "propostas": [],
+            "cpfs_encontrados": 0,
+            "propostas_encontradas": 0
+        }
+    
+    # 3. Testar conectividade com FACTA antes de consultar
+    print(f"\n🧪 Passo 3a: Testando conectividade com API FACTA...")
+    if not testar_api_facta(token=token_facta, ambiente=ambiente_facta):
+        print("❌ API FACTA não está respondendo. Finalizando consulta.")
+        return {
+            "acessos": acessos,
+            "propostas": [],
+            "cpfs_encontrados": len(cpfs),
+            "propostas_encontradas": 0
+        }
+    
+    # 4. Consultar propostas do FACTA
+    print(f"\n📋 Passo 4: Consultando propostas do FACTA...")
+    propostas = consultar_andamento_propostas_facta(
+        cpfs=cpfs,
+        token=token_facta,
+        ambiente=ambiente_facta
+    )
+    
+    # 5. Resumo final
+    print(f"\n✅ Consulta integrada finalizada:")
+    print(f"   📱 Acessos encontrados: {len(acessos)}")
+    print(f"   🆔 CPFs únicos: {len(cpfs)}")
+    print(f"   📋 Propostas encontradas: {len(propostas)}")
+    
+    return {
+        "acessos": acessos,
+        "propostas": propostas,
+        "cpfs_encontrados": len(cpfs),
+        "propostas_encontradas": len(propostas)
+    }
+
+>>>>>>> c6ff9f3 (Atualização geral)
 @st.cache_data(ttl=600)
 def ler_base(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -1077,7 +2014,7 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                         continue
                 
                 # Se não há filtro de data ou se a data está no período, conta o registro
-                if data_valida:
+                if not data_ini or not data_fim or data_valida:
                     ura_count += 1
                     # Extrai CPF do registro
                     cpf_encontrado = None
@@ -1088,8 +2025,8 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                             # Usar a nova função de limpeza de CPF
                             cpf_limpo = limpar_cpf(valor_cpf_str)
                             if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                        cpf_encontrado = cpf_limpo
-                                        break
+                                cpf_encontrado = cpf_limpo
+                                break
                     
                     # Categoriza por status
                     status_encontrado = False
@@ -1132,8 +2069,8 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                         # Usar a nova função de limpeza de CPF
                         cpf_limpo = limpar_cpf(valor_cpf_str)
                         if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                cpf_encontrado = cpf_limpo
-                                break
+                            cpf_encontrado = cpf_limpo
+                            break
                 
                 # Categoriza por status
                 status_encontrado = False
@@ -1237,6 +2174,7 @@ def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     
     return mensagens_filtradas
 
+<<<<<<< HEAD
 def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
     """Consulta o endpoint da Facta para um CPF específico."""
     if token is None:
@@ -1312,10 +2250,11 @@ def consultar_facta_por_cpf(cpf, token=None, data_ini=None, data_fim=None):
     except Exception as e:
         print(f"   ❌ Erro ao consultar Facta para CPF {cpf}: {e}")
         return []
+=======
+>>>>>>> c6ff9f3 (Atualização geral)
 
-# Cache global para consultas da Facta (evita consultas repetidas na mesma sessão)
-facta_cache = {}
 
+<<<<<<< HEAD
 def consultar_facta_multiplos_cpfs(cpfs, token=None, max_workers=8, data_ini=None, data_fim=None):
     """Consulta o endpoint da Facta para múltiplos CPFs usando threads otimizadas."""
     global facta_cache
@@ -1617,6 +2556,11 @@ def analisar_propostas_facta(propostas_dict, filtro_status="validos"):
         'cpfs_com_valores': cpfs_com_valores,
         'resumo_por_cpf': resumo_por_cpf
     }
+=======
+
+
+
+>>>>>>> c6ff9f3 (Atualização geral)
 
 def obter_cpfs_fgts_4net_kolmeya(uploaded_file, data_ini, data_fim, messages):
     """Obtém CPFs de FGTS tanto do 4NET quanto do Kolmeya."""
@@ -1815,7 +2759,7 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
                         continue
                 
                 # Se não há filtro de data ou se a data está no período, conta o registro
-                if data_valida:
+                if not data_ini or not data_fim or data_valida:
                     whatsapp_count += 1
                     if whatsapp_count <= 3:
                         print(f"      ✅ Registro WhatsApp ACEITO pelo filtro de data (Total: {whatsapp_count})")
@@ -1823,11 +2767,14 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
                     if whatsapp_count < 3:
                         print(f"      ❌ Registro WhatsApp REJEITADO pelo filtro de data")
                     continue  # Pula para o próximo registro se a data não for válida
+<<<<<<< HEAD
             else:
                 # Se não há filtro de data, conta o registro
                 whatsapp_count += 1
                 if whatsapp_count <= 3:
                     print(f"      ✅ Registro WhatsApp ACEITO (sem filtro de data) (Total: {whatsapp_count})")
+=======
+>>>>>>> c6ff9f3 (Atualização geral)
             
             # Extrai CPF do registro (apenas se o registro foi aceito)
             cpf_encontrado = None
@@ -2057,7 +3004,7 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
                         continue
                 
                 # Se não há filtro de data ou se a data está no período, conta o registro
-                if data_valida:
+                if not data_ini or not data_fim or data_valida:
                     ad_count += 1
                     if ad_count <= 3:
                         print(f"      ✅ Registro AD ACEITO pelo filtro de data (Total: {ad_count})")
@@ -2065,11 +3012,14 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
                     if ad_count < 3:
                         print(f"      ❌ Registro AD REJEITADO pelo filtro de data")
                     continue  # Pula para o próximo registro se a data não for válida
+<<<<<<< HEAD
             else:
                 # Se não há filtro de data, conta o registro
                 ad_count += 1
                 if ad_count <= 3:
                     print(f"      ✅ Registro AD ACEITO (sem filtro de data) (Total: {ad_count})")
+=======
+>>>>>>> c6ff9f3 (Atualização geral)
             
             # Extrai CPF do registro (apenas se o registro foi aceito)
             cpf_encontrado = None
@@ -2125,6 +3075,184 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
     
     print(f"🔍 DEBUG - FUNÇÃO extrair_ad_da_base CONCLUÍDA")
     return ad_count, ad_por_status, ad_cpfs_por_status
+
+def comparar_cpfs_facta_kolmeya(start_at, end_at, ambiente_facta="homologacao", tenant_segment_id=None, limit_kolmeya=30000, limit_facta=5000):
+    """
+    Compara CPFs retornados pelo endpoint da FACTA com CPFs retornados pelo endpoint do Kolmeya.
+    
+    Args:
+        start_at: Data inicial (YYYY-MM-DD)
+        end_at: Data final (YYYY-MM-DD)
+        ambiente_facta: Ambiente do FACTA ("homologacao" ou "producao")
+        tenant_segment_id: Centro de custo do Kolmeya
+        limit_kolmeya: Limite de mensagens para consultar no Kolmeya
+        limit_facta: Limite de propostas para consultar no FACTA
+    
+    Returns:
+        Dicionário com resultados da comparação
+    """
+    print(f"🔍 Iniciando comparação CPFs FACTA vs Kolmeya:")
+    print(f"   📅 Período: {start_at} a {end_at}")
+    print(f"   🏢 Ambiente FACTA: {ambiente_facta}")
+    print(f"   🏢 Centro de custo Kolmeya: {tenant_segment_id}")
+    
+    # Obter tokens
+    token_kolmeya = get_kolmeya_token()
+    token_facta = get_facta_token()
+    
+    if not token_kolmeya:
+        print("❌ Token do Kolmeya não encontrado")
+        return {
+            "erro": "Token do Kolmeya não encontrado",
+            "cpfs_kolmeya": set(),
+            "cpfs_facta": set(),
+            "cpfs_coincidentes": set(),
+            "cpfs_apenas_kolmeya": set(),
+            "cpfs_apenas_facta": set(),
+            "total_kolmeya": 0,
+            "total_facta": 0,
+            "total_coincidentes": 0
+        }
+    
+    if not token_facta:
+        print("❌ Token do FACTA não encontrado")
+        return {
+            "erro": "Token do FACTA não encontrado",
+            "cpfs_kolmeya": set(),
+            "cpfs_facta": set(),
+            "cpfs_coincidentes": set(),
+            "cpfs_apenas_kolmeya": set(),
+            "cpfs_apenas_facta": set(),
+            "total_kolmeya": 0,
+            "total_facta": 0,
+            "total_coincidentes": 0
+        }
+    
+    # 1. CONSULTAR CPFs do Kolmeya
+    print(f"\n📱 Passo 1: Consultando CPFs do Kolmeya...")
+    
+    # Formatar datas para o formato esperado pela API (YYYY-MM-DD HH:MM)
+    start_at_formatted = f"{start_at} 00:00"
+    end_at_formatted = f"{end_at} 23:59"
+    
+    cpfs_kolmeya = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at_formatted,
+        end_at=end_at_formatted,
+        limit=limit_kolmeya,
+        token=token_kolmeya,
+        tenant_segment_id=tenant_segment_id
+    )
+    
+    # Converter para set para facilitar comparação
+    cpfs_kolmeya_set = set(cpfs_kolmeya)
+    
+    print(f"✅ CPFs do Kolmeya encontrados: {len(cpfs_kolmeya_set)}")
+    
+    # 2. CONSULTAR CPFs do FACTA
+    print(f"\n📋 Passo 2: Consultando CPFs do FACTA...")
+    
+    # Testar conectividade com FACTA
+    if not testar_api_facta(token=token_facta, ambiente=ambiente_facta):
+        print("❌ API FACTA não está respondendo")
+        return {
+            "erro": "API FACTA não está respondendo",
+            "cpfs_kolmeya": cpfs_kolmeya_set,
+            "cpfs_facta": set(),
+            "cpfs_coincidentes": set(),
+            "cpfs_apenas_kolmeya": cpfs_kolmeya_set,
+            "cpfs_apenas_facta": set(),
+            "total_kolmeya": len(cpfs_kolmeya_set),
+            "total_facta": 0,
+            "total_coincidentes": 0
+        }
+    
+    # Consultar todas as propostas do FACTA no período
+    data_ini_dt = datetime.strptime(start_at, '%Y-%m-%d').date()
+    data_fim_dt = datetime.strptime(end_at, '%Y-%m-%d').date()
+    
+    propostas_facta = consultar_todas_propostas_facta(
+        token=token_facta,
+        ambiente=ambiente_facta,
+        data_ini=data_ini_dt,
+        data_fim=data_fim_dt
+    )
+    
+    # Extrair CPFs únicos das propostas do FACTA
+    cpfs_facta_set = set()
+    for proposta in propostas_facta:
+        cpf = proposta.get('cpf', '')
+        if cpf:
+            cpf_limpo = limpar_cpf(str(cpf))
+            if cpf_limpo and len(cpf_limpo) == 11:
+                cpfs_facta_set.add(cpf_limpo)
+    
+    print(f"✅ CPFs do FACTA encontrados: {len(cpfs_facta_set)}")
+    
+    # 3. COMPARAR CPFs
+    print(f"\n🔍 Passo 3: Comparando CPFs...")
+    
+    # CPFs que estão em AMBOS os sistemas
+    cpfs_coincidentes = cpfs_kolmeya_set & cpfs_facta_set
+    
+    # CPFs que estão APENAS no Kolmeya
+    cpfs_apenas_kolmeya = cpfs_kolmeya_set - cpfs_facta_set
+    
+    # CPFs que estão APENAS no FACTA
+    cpfs_apenas_facta = cpfs_facta_set - cpfs_kolmeya_set
+    
+    # 4. RESULTADOS
+    print(f"\n✅ Comparação concluída:")
+    print(f"   📊 Total CPFs Kolmeya: {len(cpfs_kolmeya_set)}")
+    print(f"   📊 Total CPFs FACTA: {len(cpfs_facta_set)}")
+    print(f"   ✅ CPFs coincidentes: {len(cpfs_coincidentes)}")
+    print(f"   📱 CPFs apenas Kolmeya: {len(cpfs_apenas_kolmeya)}")
+    print(f"   📋 CPFs apenas FACTA: {len(cpfs_apenas_facta)}")
+    
+    # Calcular percentuais
+    percentual_coincidentes_kolmeya = (len(cpfs_coincidentes) / len(cpfs_kolmeya_set) * 100) if cpfs_kolmeya_set else 0
+    percentual_coincidentes_facta = (len(cpfs_coincidentes) / len(cpfs_facta_set) * 100) if cpfs_facta_set else 0
+    
+    print(f"   📈 % CPFs Kolmeya que estão no FACTA: {percentual_coincidentes_kolmeya:.1f}%")
+    print(f"   📈 % CPFs FACTA que estão no Kolmeya: {percentual_coincidentes_facta:.1f}%")
+    
+    # Mostrar alguns exemplos de CPFs coincidentes
+    if cpfs_coincidentes:
+        print(f"   📋 Exemplos de CPFs coincidentes:")
+        for i, cpf in enumerate(list(cpfs_coincidentes)[:5]):
+            print(f"      {i+1}. {cpf}")
+        if len(cpfs_coincidentes) > 5:
+            print(f"      ... e mais {len(cpfs_coincidentes) - 5} CPFs")
+    
+    # Mostrar alguns exemplos de CPFs apenas no Kolmeya
+    if cpfs_apenas_kolmeya:
+        print(f"   📱 Exemplos de CPFs apenas no Kolmeya:")
+        for i, cpf in enumerate(list(cpfs_apenas_kolmeya)[:3]):
+            print(f"      {i+1}. {cpf}")
+        if len(cpfs_apenas_kolmeya) > 3:
+            print(f"      ... e mais {len(cpfs_apenas_kolmeya) - 3} CPFs")
+    
+    # Mostrar alguns exemplos de CPFs apenas no FACTA
+    if cpfs_apenas_facta:
+        print(f"   📋 Exemplos de CPFs apenas no FACTA:")
+        for i, cpf in enumerate(list(cpfs_apenas_facta)[:3]):
+            print(f"      {i+1}. {cpf}")
+        if len(cpfs_apenas_facta) > 3:
+            print(f"      ... e mais {len(cpfs_apenas_facta) - 3} CPFs")
+    
+    return {
+        "cpfs_kolmeya": cpfs_kolmeya_set,
+        "cpfs_facta": cpfs_facta_set,
+        "cpfs_coincidentes": cpfs_coincidentes,
+        "cpfs_apenas_kolmeya": cpfs_apenas_kolmeya,
+        "cpfs_apenas_facta": cpfs_apenas_facta,
+        "total_kolmeya": len(cpfs_kolmeya_set),
+        "total_facta": len(cpfs_facta_set),
+        "total_coincidentes": len(cpfs_coincidentes),
+        "percentual_coincidentes_kolmeya": percentual_coincidentes_kolmeya,
+        "percentual_coincidentes_facta": percentual_coincidentes_facta,
+        "propostas_facta": propostas_facta
+    }
+
 
 def main():
     # Configuração da página com layout otimizado
@@ -2228,18 +3356,9 @@ def main():
         document.addEventListener('DOMContentLoaded', reloadOnError);
     </script>
     """, unsafe_allow_html=True)
-    
-    if HAS_AUTOREFRESH:
-        st_autorefresh(interval=5 * 60 * 1000, key="datarefresh")  # Aumentado para 5 minutos
-    
-    # Adicionar teste de ambiente na sidebar
+   
     test_environment_status()
     
-    # IMPORTANTE: Separação clara dos dados por painel:
-    # - PAINEL KOLMEYA: Dados da API do Kolmeya (SMS enviados)
-    # - PAINEL 4NET: Dados da URA (UTM source = "URA") - SEMPRE separado do Kolmeya
-    # - PAINEL WHATSAPP: Dados do WhatsApp (UTM source = "WHATSAPP_MKT")
-    # - PAINEL AD: Dados de anúncios (UTM source = "ad")
     
     st.markdown("<h1 style='text-align: center;'>📊 Dashboard Servix</h1>", unsafe_allow_html=True)
 
@@ -2250,6 +3369,17 @@ def main():
     with col_data_fim:
         data_fim = st.date_input("Data final", value=datetime.now().date(), key="data_fim_topo")
 
+<<<<<<< HEAD
+=======
+    # Variável global para armazenar valor do FACTA encontrado na comparação de CPFs
+    if 'valor_facta_kolmeya' not in st.session_state:
+        st.session_state.valor_facta_kolmeya = 0.0
+    
+    # Variável global para armazenar CPFs com propostas do FACTA
+    if 'cpfs_com_propostas_facta' not in st.session_state:
+        st.session_state.cpfs_com_propostas_facta = 0
+
+>>>>>>> c6ff9f3 (Atualização geral)
     # Filtro de centro de custo - IDs conforme documentação da API Kolmeya
     centro_custo_opcoes = {
         "TODOS": None,
@@ -2266,21 +3396,7 @@ def main():
     )
     centro_custo_valor = centro_custo_opcoes[centro_custo_selecionado]
     
-    # Filtro de status da Facta
-    st.sidebar.markdown("### 📊 Filtros Facta")
-    status_facta_opcoes = {
-        "Todos os Status": "todos",
-        "Apenas Contrato Pago": "contrato_pago",
-        "Status Válidos (Incluindo Cancelado)": "validos"
-    }
-    
-    status_facta_selecionado = st.sidebar.selectbox(
-        "Status Facta",
-        options=list(status_facta_opcoes.keys()),
-        index=2,  # "Status Válidos" será a opção padrão
-        key="status_facta_filtro"
-    )
-    status_facta_valor = status_facta_opcoes[status_facta_selecionado]
+
 
     # Saldo Kolmeya com tratamento de erro melhorado
     col_saldo, col_vazio = st.columns([0.9, 5.1])
@@ -2311,6 +3427,7 @@ def main():
                 unsafe_allow_html=True
             )
             
+<<<<<<< HEAD
             # Botão para gerar token da Facta
             if st.button("🔑 Gerar Token Facta", key="gerar_token_facta"):
                 try:
@@ -2348,27 +3465,16 @@ def main():
                     print(f"❌ Erro ao gerar token: {e}")
                     import traceback
                     traceback.print_exc()
+=======
+
+>>>>>>> c6ff9f3 (Atualização geral)
                 
 
         except Exception as e:
             st.error(f"❌ Erro ao obter saldo: {str(e)}")
             saldo_kolmeya = 0.0
 
-    # Valores zerados para produção e vendas
-    st.session_state["producao_facta_ura"] = 0.0
-    st.session_state["total_vendas_facta_ura"] = 0
-    st.session_state["producao_facta_kolmeya"] = 0.0
-    st.session_state["total_vendas_facta_kolmeya"] = 0
-    st.session_state["producao_facta_total"] = 0.0
-    st.session_state["total_vendas_facta_total"] = 0
-    
-    # Valores zerados para WhatsApp
-    st.session_state["producao_facta_whatsapp"] = 0.0
-    st.session_state["total_vendas_facta_whatsapp"] = 0
-    
-    # Valores zerados para AD
-    st.session_state["producao_facta_ad"] = 0.0
-    st.session_state["total_vendas_facta_ad"] = 0
+
     
     # Upload de base local (movido para antes do cálculo para que os dados estejam disponíveis)
     uploaded_file = st.file_uploader("Faça upload da base de CPFs/Telefones (Excel ou CSV)", type=["csv", "xlsx"])
@@ -2397,6 +3503,7 @@ def main():
             print(f"   📅 Atual: {data_ini}, {data_fim}, {centro_custo_selecionado}")
             
             # Limpar cache completo
+<<<<<<< HEAD
             st.session_state["producao_facta_kolmeya"] = 0.0
             st.session_state["total_vendas_facta_kolmeya"] = 0
             st.session_state["producao_facta_ura"] = 0.0
@@ -2410,6 +3517,12 @@ def main():
             global facta_cache
             facta_cache.clear()
             print(f"   🗑️ Cache da Facta limpo")
+=======
+            pass
+            
+            # Cache limpo
+            print(f"   🗑️ Cache limpo")
+>>>>>>> c6ff9f3 (Atualização geral)
     
     # Atualizar timestamp da consulta
     st.session_state["ultima_data_consulta"] = (data_ini, data_fim, centro_custo_selecionado)
@@ -2484,7 +3597,7 @@ def main():
     if uploaded_file is not None:
         try:
             # Extrair telefones da base
-            telefones_base_temp = extrair_telefones_da_base(uploaded_file, data_ini, data_fim)
+            telefones_base_temp = extrair_telefones_da_base(df_base, data_ini, data_fim)
             
             # Para o painel 4NET, usar APENAS dados da URA (UTM source = "URA")
             if centro_custo_selecionado == "Novo":
@@ -2502,6 +3615,12 @@ def main():
         except Exception as e:
             print(f"Erro ao calcular telefones coincidentes: {e}")
             # Fallback para dados da URA (painel 4NET)
+            # Inicializar variáveis URA com valores padrão se não estiverem definidas
+            if 'ura_count' not in locals() and 'ura_count' not in globals():
+                ura_count = 0
+            if 'ura_por_status' not in locals() and 'ura_por_status' not in globals():
+                ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+            
             if centro_custo_selecionado == "Novo":
                 total_leads_gerados = ura_por_status.get('Novo', 0)
             elif centro_custo_selecionado == "FGTS":
@@ -2513,6 +3632,12 @@ def main():
             telefones_base = total_leads_gerados
     else:
         # Se não há base ou mensagens, usar apenas dados da URA (painel 4NET)
+        # Inicializar variáveis URA com valores padrão se não estiverem definidas
+        if 'ura_count' not in locals() and 'ura_count' not in globals():
+            ura_count = 0
+        if 'ura_por_status' not in locals() and 'ura_por_status' not in globals():
+            ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+        
         if centro_custo_selecionado == "Novo":
             total_leads_gerados = ura_por_status.get('Novo', 0)
         elif centro_custo_selecionado == "FGTS":
@@ -2565,6 +3690,7 @@ def main():
             print(f"   📊 Total AD: {ad_count}")
             print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ad_cpfs_por_status.items())}")
             
+<<<<<<< HEAD
             # CONSULTA AUTOMÁTICA NA FACTA
             # Obter CPFs para consulta na Facta baseado no centro de custo selecionado
             # Extrair CPFs da base para consulta na Facta
@@ -2806,120 +3932,27 @@ def main():
                 st.session_state["total_vendas_facta_whatsapp"] = 0
                 st.session_state["producao_facta_ad"] = 0.0
                 st.session_state["total_vendas_facta_ad"] = 0
+=======
+
                 
+            # Processar dados do WhatsApp silenciosamente
+            whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
+            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+            
+            print(f"🔍 DEBUG - Dados WhatsApp extraídos:")
+            print(f"   📊 Total registros WhatsApp: {whatsapp_count}")
+            print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+            print(f"   🏢 Centro de custo selecionado: {centro_custo_selecionado}")
+>>>>>>> c6ff9f3 (Atualização geral)
+                
+
         except Exception:
             # Em caso de erro, manter valores em zero
             ura_count = 0
             ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
             ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
-            st.session_state["producao_facta_ura"] = 0.0
-            st.session_state["total_vendas_facta_ura"] = 0
-            st.session_state["producao_facta_whatsapp"] = 0.0
-            st.session_state["total_vendas_facta_whatsapp"] = 0
-            st.session_state["producao_facta_ad"] = 0.0
-            st.session_state["total_vendas_facta_ad"] = 0
-                
-            # Processar dados do WhatsApp e AD silenciosamente
-            try:
-                whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
-                ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
-                
-                # Processar WhatsApp na Facta
-                if whatsapp_count > 0:
-                    cpfs_whatsapp_para_consulta = set()
-                    if centro_custo_selecionado == "Novo":
-                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('Novo', set())
-                    elif centro_custo_selecionado == "FGTS":
-                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('FGTS', set())
-                    elif centro_custo_selecionado == "Crédito CLT":
-                        cpfs_whatsapp_para_consulta = whatsapp_cpfs_por_status.get('CLT', set())
-                    else:
-                        for cpfs_status in whatsapp_cpfs_por_status.values():
-                            cpfs_whatsapp_para_consulta.update(cpfs_status)
-                    
-                    if cpfs_whatsapp_para_consulta:
-                        try:
-                            propostas_facta_whatsapp = consultar_facta_multiplos_cpfs(
-                                list(cpfs_whatsapp_para_consulta), 
-                                token=None, 
-                                max_workers=3, 
-                                data_ini=data_ini, 
-                                data_fim=data_fim
-                            )
-                            
-                            if propostas_facta_whatsapp:
-                                analise_facta_whatsapp = analisar_propostas_facta(propostas_facta_whatsapp)
-                                st.session_state["producao_facta_whatsapp"] = analise_facta_whatsapp['valor_total_propostas']
-                                st.session_state["total_vendas_facta_whatsapp"] = analise_facta_whatsapp['total_propostas']
-                            else:
-                                st.session_state["producao_facta_whatsapp"] = 0.0
-                                st.session_state["total_vendas_facta_whatsapp"] = 0
-                        except Exception:
-                            st.session_state["producao_facta_whatsapp"] = 0.0
-                            st.session_state["total_vendas_facta_whatsapp"] = 0
-                    else:
-                        st.session_state["producao_facta_whatsapp"] = 0.0
-                        st.session_state["total_vendas_facta_whatsapp"] = 0
-                else:
-                    st.session_state["producao_facta_whatsapp"] = 0.0
-                    st.session_state["total_vendas_facta_whatsapp"] = 0
-                
-                # Processar AD na Facta
-                if ad_count > 0:
-                    cpfs_ad_para_consulta = set()
-                    if centro_custo_selecionado == "Novo":
-                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('Novo', set())
-                    elif centro_custo_selecionado == "FGTS":
-                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('FGTS', set())
-                    elif centro_custo_selecionado == "Crédito CLT":
-                        cpfs_ad_para_consulta = ad_cpfs_por_status.get('CLT', set())
-                    else:
-                        for cpfs_status in ad_cpfs_por_status.values():
-                            cpfs_ad_para_consulta.update(cpfs_status)
-                    
-                    if cpfs_ad_para_consulta:
-                        try:
-                            propostas_facta_ad = consultar_facta_multiplos_cpfs(
-                                list(cpfs_ad_para_consulta), 
-                                token=None, 
-                                max_workers=3, 
-                                data_ini=data_ini, 
-                                data_fim=data_fim
-                            )
-                            
-                            if propostas_facta_ad:
-                                analise_facta_ad = analisar_propostas_facta(propostas_facta_ad)
-                                st.session_state["producao_facta_ad"] = analise_facta_ad['valor_total_propostas']
-                                st.session_state["total_vendas_facta_ad"] = analise_facta_ad['total_propostas']
-                            else:
-                                st.session_state["producao_facta_ad"] = 0.0
-                                st.session_state["total_vendas_facta_ad"] = 0
-                        except Exception:
-                            st.session_state["producao_facta_ad"] = 0.0
-                            st.session_state["total_vendas_facta_ad"] = 0
-                    else:
-                        st.session_state["producao_facta_ad"] = 0.0
-                        st.session_state["total_vendas_facta_ad"] = 0
-                else:
-                    st.session_state["producao_facta_ad"] = 0.0
-                    st.session_state["total_vendas_facta_ad"] = 0
-                    
-            except Exception:
-                st.session_state["producao_facta_whatsapp"] = 0.0
-                st.session_state["total_vendas_facta_whatsapp"] = 0
-                st.session_state["producao_facta_ad"] = 0.0
-                st.session_state["total_vendas_facta_ad"] = 0
-        except Exception:
-            # Em caso de erro, manter valores em zero
-            ura_count = 0
-            ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
-            ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
-            st.session_state["producao_facta_ura"] = 0.0
-            st.session_state["total_vendas_facta_ura"] = 0
-            st.session_state["producao_facta_whatsapp"] = 0.0
-            st.session_state["total_vendas_facta_whatsapp"] = 0
-            st.session_state["producao_facta_ad"] = 0.0
-            st.session_state["total_vendas_facta_ad"] = 0
+            # Dados zerados
+            pass
     else:
         # Se não há arquivo carregado, deixar o painel 4NET vazio (sem dados URA)
         ura_count = 0
@@ -2940,8 +3973,12 @@ def main():
             ultima_consulta.get('data_fim') == data_fim and
             ultima_consulta.get('centro_custo') == centro_custo_selecionado):
             print(f"   ⚠️ Mesmo período consultado anteriormente, limpando cache")
+<<<<<<< HEAD
             st.session_state["producao_facta_kolmeya"] = 0.0
             st.session_state["total_vendas_facta_kolmeya"] = 0
+=======
+            pass
+>>>>>>> c6ff9f3 (Atualização geral)
     
     # Atualizar timestamp da consulta
     st.session_state["ultima_consulta_kolmeya"] = {
@@ -2951,6 +3988,7 @@ def main():
         'timestamp': datetime.now()
     }
     
+<<<<<<< HEAD
     # CONSULTA DA FACTA PARA KOLMEYA (COM CPFs DOS ACESSOS DO KOLMEYA)
     # CORREÇÃO: Usar APENAS acessos do Kolmeya, independente de mensagens
     print(f"🔍 CONSULTA KOLMEYA - Iniciando busca por acessos e CPFs...")
@@ -2979,10 +4017,31 @@ def main():
         print(f"✅ Token da Facta encontrado: {token_facta[:10]}...")
         
         # CONSULTA DIRETA aos acessos do Kolmeya (sem depender de messages)
+=======
+    # CONSULTA DOS ACESSOS DO KOLMEYA
+    print(f"🔍 CONSULTA KOLMEYA - Iniciando busca por acessos...")
+    
+    # Verificar token do Kolmeya
+    token_kolmeya = get_kolmeya_token()
+    print(f"   🔑 Token Kolmeya: {'Sim' if token_kolmeya else 'Não'}")
+    
+    # Inicializar variável acessos_kolmeya
+    acessos_kolmeya = []
+    
+    if not token_kolmeya:
+        print(f"   ❌ Token do Kolmeya não encontrado!")
+        st.session_state["acessos_kolmeya_count"] = 0
+        st.session_state["cpfs_kolmeya_consultados"] = set()
+    else:
+        print(f"✅ Token do Kolmeya encontrado: {token_kolmeya[:10]}...")
+        
+        # CONSULTA DIRETA aos acessos do Kolmeya
+>>>>>>> c6ff9f3 (Atualização geral)
         print(f"🔍 Consultando acessos do Kolmeya diretamente...")
         print(f"   📅 Período: {data_ini} a {data_fim}")
         print(f"   🏢 Centro de custo: {centro_custo_selecionado} ({centro_custo_valor})")
         
+<<<<<<< HEAD
         # Verificar token do Kolmeya
         token_kolmeya = get_kolmeya_token()
         print(f"   🔑 Token Kolmeya: {'Sim' if token_kolmeya else 'Não'}")
@@ -3077,6 +4136,43 @@ def main():
             st.session_state["total_vendas_facta_kolmeya"] = 0
             st.session_state["acessos_kolmeya_count"] = 0
             st.session_state["cpfs_kolmeya_consultados"] = set()
+=======
+        # Forçar nova consulta de acessos
+        print(f"   🔄 Forçando consulta de acessos para período: {data_ini} a {data_fim}")
+        
+        acessos_kolmeya = consultar_acessos_sms_kolmeya(
+            start_at=data_ini.strftime('%Y-%m-%d'),  # Formato correto: apenas data
+            end_at=data_fim.strftime('%Y-%m-%d'),    # Formato correto: apenas data
+            limit=10000,  # Aumentado para pegar mais acessos
+            token=token_kolmeya,
+            tenant_segment_id=centro_custo_valor  # Passar centro de custo para filtragem
+        )
+    
+    if acessos_kolmeya:
+        print(f"✅ Acessos encontrados: {len(acessos_kolmeya)}")
+        
+        # SALVAR contagem de acessos no session state para mostrar no painel
+        st.session_state["acessos_kolmeya_count"] = len(acessos_kolmeya)
+        
+        # Extrair CPFs dos acessos
+        cpfs_acessos = extrair_cpfs_acessos_kolmeya(acessos_kolmeya)
+        
+        print(f"🔍 DEBUG - CPFs extraídos dos acessos do Kolmeya:")
+        print(f"   📊 Total de acessos: {len(acessos_kolmeya)}")
+        print(f"   📊 Total de CPFs únicos de acessos: {len(cpfs_acessos)}")
+        if cpfs_acessos:
+            print(f"   📋 Primeiros 5 CPFs de acessos: {list(cpfs_acessos)[:5]}")
+            
+            # SALVAR CPFs consultados no session state para mostrar no painel
+            st.session_state["cpfs_kolmeya_consultados"] = cpfs_acessos
+        else:
+            print(f"   ⚠️ Nenhum CPF encontrado nos acessos do Kolmeya")
+            st.session_state["cpfs_kolmeya_consultados"] = set()  # CPFs vazios
+    else:
+        print(f"⚠️ Nenhum acesso encontrado no Kolmeya para o período {data_ini} a {data_fim}")
+        st.session_state["acessos_kolmeya_count"] = 0
+        st.session_state["cpfs_kolmeya_consultados"] = set()
+>>>>>>> c6ff9f3 (Atualização geral)
 
     # Layout simplificado com HTML puro - sem componentes Streamlit
     st.markdown("""
@@ -3186,6 +4282,14 @@ def main():
     total_vendas = 0
     producao = 0.0
     leads_gerados_kolmeya = 0
+    
+    # Adicionar valor do FACTA encontrado na comparação de CPFs
+    valor_facta_kolmeya = st.session_state.get('valor_facta_kolmeya', 0.0)
+    cpfs_com_propostas_facta = st.session_state.get('cpfs_com_propostas_facta', 0)
+    
+    # Adicionar vendas e produção do FACTA
+    total_vendas += cpfs_com_propostas_facta
+    producao += valor_facta_kolmeya
 
     
     # Debug: Verificar dados recebidos
@@ -3197,6 +4301,9 @@ def main():
         print(f"   📅 Última mensagem - enviada_em: {messages[-1].get('enviada_em', 'N/A')}")
         print(f"   🏢 Centro de custo da primeira: {messages[0].get('centro_custo', 'N/A')}")
     print(f"   💰 Investimento calculado: R$ {investimento:.2f}")
+    print(f"   💰 Valor FACTA adicionado: R$ {valor_facta_kolmeya:,.2f}")
+    print(f"   📊 CPFs com propostas FACTA: {cpfs_com_propostas_facta}")
+    print(f"   💰 Produção total (incluindo FACTA): R$ {producao:,.2f}")
     
     # CAMPO 1: Taxa de entrega
     disparos_por_lead = (leads_gerados_kolmeya / total_mensagens * 100) if total_mensagens > 0 else 0.0
@@ -3227,6 +4334,7 @@ def main():
         leads_gerados_kolmeya = 0
         print(f"⚠️ Nenhuma base carregada para comparação")
     
+<<<<<<< HEAD
     # Dados reais do Kolmeya - usar dados da Facta quando disponíveis
     # Para TODOS os centros de custo, usar dados do Kolmeya da Facta
     total_vendas = st.session_state.get("total_vendas_facta_kolmeya", 0)
@@ -3235,6 +4343,14 @@ def main():
     print(f"🔍 DEBUG - Dados Facta Kolmeya carregados:")
     print(f"   📊 Total vendas: {total_vendas}")
     print(f"   💰 Produção: R$ {producao:,.2f}")
+=======
+    # Dados reais do Kolmeya (já incluem valores do FACTA)
+    print(f"🔍 DEBUG - Dados Kolmeya carregados:")
+    print(f"   📊 Total vendas: {total_vendas}")
+    print(f"   💰 Produção total: R$ {producao:,.2f}")
+    print(f"   💰 Valor FACTA incluído: R$ {valor_facta_kolmeya:,.2f}")
+    print(f"   📊 CPFs com propostas FACTA: {cpfs_com_propostas_facta}")
+>>>>>>> c6ff9f3 (Atualização geral)
     print(f"   🏢 Centro de custo: {centro_custo_selecionado}")
     
     # Previsão de faturamento (comissão de 17.1%)
@@ -3289,23 +4405,22 @@ def main():
     taxa_ativacao = (total_atendidas / telefones_base_ura * 100) if telefones_base_ura > 0 else 0.0
     taxa_lead = taxa_ativacao  # Taxa de lead é a mesma que taxa de ativação
     
-    # Dados do painel 4NET - usar APENAS dados da URA (não misturar com Kolmeya)
-    # Para todos os centros de custo, usar apenas dados da URA
-    total_vendas_ura = st.session_state.get("total_vendas_facta_ura", 0)
-    producao_ura = st.session_state.get("producao_facta_ura", 0.0)
+    # Dados do painel 4NET
+    total_vendas_ura = 0
+    producao_ura = 0.0
     
-    # Calcular métricas baseadas nos dados da Facta
-    if total_vendas_ura > 0 and producao_ura > 0:
-        fat_med_venda = producao_ura / total_vendas_ura  # Faturamento médio por venda
-        retor_estimado = producao_ura * 0.171  # Retorno estimado (comissão de 17.1%)
-    else:
-        fat_med_venda = 0.0
-        retor_estimado = 0.0
+    # Calcular métricas baseadas em estimativas
+    fat_med_venda = 0.0
+    retor_estimado = 0.0
 
     # ROI do painel 4NET baseado APENAS nos dados da URA
     roi_ura = producao_ura - total_investimento
 
+<<<<<<< HEAD
     # Dados do PAINEL WHATSAPP baseados nos dados reais da base e Facta
+=======
+    # Dados do PAINEL WHATSAPP baseados nos dados reais da base
+>>>>>>> c6ff9f3 (Atualização geral)
     if uploaded_file is not None and df_base is not None:
         try:
             whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
@@ -3313,8 +4428,12 @@ def main():
             print(f"🔍 DEBUG - Painel WhatsApp - Dados extraídos:")
             print(f"   📊 WhatsApp count: {whatsapp_count}")
             print(f"   📋 CPFs WhatsApp por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+<<<<<<< HEAD
             print(f"   🔍 Session state WhatsApp - Produção: {st.session_state.get('producao_facta_whatsapp', 'NÃO ENCONTRADO')}")
             print(f"   🔍 Session state WhatsApp - Vendas: {st.session_state.get('total_vendas_facta_whatsapp', 'NÃO ENCONTRADO')}")
+=======
+            print(f"   🔍 Dados WhatsApp processados")
+>>>>>>> c6ff9f3 (Atualização geral)
             
             # Usar dados reais do WhatsApp
             campanhas_realizadas = whatsapp_count  # Total de mensagens WhatsApp
@@ -3323,6 +4442,7 @@ def main():
             tempo_medio_campanha = 2.5  # Tempo médio de resposta em horas
             total_engajados = whatsapp_count  # Total de mensagens enviadas
             
+<<<<<<< HEAD
             # SEMPRE usar dados reais da Facta se disponíveis, independente do valor
             total_vendas_novo = st.session_state.get("total_vendas_facta_whatsapp", 0)
             producao_novo = st.session_state.get("producao_facta_whatsapp", 0.0)
@@ -3331,17 +4451,28 @@ def main():
             if producao_novo == 0:
                 total_vendas_novo = whatsapp_count * 0.15  # Estimativa de vendas (15% de conversão)
                 producao_novo = total_vendas_novo * 5000  # Produção estimada (ticket médio R$ 5.000)
+=======
+            # Usar estimativas
+            total_vendas_novo = whatsapp_count * 0.15  # Estimativa de vendas (15% de conversão)
+            producao_novo = total_vendas_novo * 5000  # Produção estimada (ticket médio R$ 5.000)
+>>>>>>> c6ff9f3 (Atualização geral)
             
             roi_novo = producao_novo - total_investimento_novo
             
             # Debug: Mostrar valores encontrados
             print(f"🔍 DEBUG - Painel WhatsApp - Valores encontrados:")
             print(f"   📊 Campanhas realizadas: {campanhas_realizadas}")
+<<<<<<< HEAD
             print(f"   💰 Produção Facta: R$ {producao_novo:,.2f}")
             print(f"   📈 Total vendas Facta: {total_vendas_novo}")
             print(f"   💰 ROI calculado: R$ {roi_novo:,.2f}")
             print(f"   🔍 Session state WhatsApp - Produção: {st.session_state.get('producao_facta_whatsapp', 'NÃO ENCONTRADO')}")
             print(f"   🔍 Session state WhatsApp - Vendas: {st.session_state.get('total_vendas_facta_whatsapp', 'NÃO ENCONTRADO')}")
+=======
+            print(f"   💰 Produção estimada: R$ {producao_novo:,.2f}")
+            print(f"   📈 Total vendas estimado: {total_vendas_novo}")
+            print(f"   💰 ROI calculado: R$ {roi_novo:,.2f}")
+>>>>>>> c6ff9f3 (Atualização geral)
         except Exception as e:
             print(f"Erro ao processar dados do WhatsApp: {e}")
             # Fallback para valores padrão
@@ -3364,7 +4495,11 @@ def main():
         producao_novo = 0.0
         roi_novo = 0.0
 
+<<<<<<< HEAD
     # Dados do TERCEIRO PAINEL baseados nos dados reais da base e Facta
+=======
+    # Dados do TERCEIRO PAINEL baseados nos dados reais da base
+>>>>>>> c6ff9f3 (Atualização geral)
     if uploaded_file is not None and df_base is not None:
         try:
             ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
@@ -3376,6 +4511,7 @@ def main():
             tempo_medio_acao = 3.0  # Tempo médio de resposta em horas
             total_efetivos = ad_count  # Total de ações realizadas
             
+<<<<<<< HEAD
             # SEMPRE usar dados reais da Facta se disponíveis, independente do valor
             total_vendas_segundo = st.session_state.get("total_vendas_facta_ad", 0)
             producao_segundo = st.session_state.get("producao_facta_ad", 0.0)
@@ -3384,17 +4520,28 @@ def main():
             if producao_segundo == 0:
                 total_vendas_segundo = ad_count * 0.12  # Estimativa de vendas (12% de conversão)
                 producao_segundo = total_vendas_segundo * 4500  # Produção estimada (ticket médio R$ 4.500)
+=======
+            # Usar estimativas
+            total_vendas_segundo = ad_count * 0.12  # Estimativa de vendas (12% de conversão)
+            producao_segundo = total_vendas_segundo * 4500  # Produção estimada (ticket médio R$ 4.500)
+>>>>>>> c6ff9f3 (Atualização geral)
             
             roi_segundo = producao_segundo - total_investimento_segundo
             
             # Debug: Mostrar valores encontrados
             print(f"🔍 DEBUG - Painel AD - Valores encontrados:")
             print(f"   📊 Ações realizadas: {acoes_realizadas}")
+<<<<<<< HEAD
             print(f"   💰 Produção Facta: R$ {producao_segundo:,.2f}")
             print(f"   📈 Total vendas Facta: {total_vendas_segundo}")
             print(f"   💰 ROI calculado: R$ {roi_segundo:,.2f}")
             print(f"   🔍 Session state AD - Produção: {st.session_state.get('producao_facta_ad', 'NÃO ENCONTRADO')}")
             print(f"   🔍 Session state AD - Vendas: {st.session_state.get('total_vendas_facta_ad', 'NÃO ENCONTRADO')}")
+=======
+            print(f"   💰 Produção estimada: R$ {producao_segundo:,.2f}")
+            print(f"   📈 Total vendas estimado: {total_vendas_segundo}")
+            print(f"   💰 ROI calculado: R$ {roi_segundo:,.2f}")
+>>>>>>> c6ff9f3 (Atualização geral)
             
         except Exception as e:
             print(f"Erro ao processar dados do AD: {e}")
@@ -3419,6 +4566,7 @@ def main():
         roi_segundo = 0.0
 
         # Inicializar variáveis que podem não estar definidas
+<<<<<<< HEAD
     taxa_lead = getattr(locals(), 'taxa_lead', 0.0)
     ligacoes_realizadas = getattr(locals(), 'ligacoes_realizadas', 0)
     total_investimento = getattr(locals(), 'total_investimento', 0.0)
@@ -3550,6 +4698,34 @@ def main():
             print(f"❌ Erro ao salvar métricas no banco: {e}")
             import traceback
             traceback.print_exc()
+=======
+    taxa_lead = locals().get('taxa_lead', 0.0)
+    ligacoes_realizadas = locals().get('ligacoes_realizadas', 0)
+    total_investimento = locals().get('total_investimento', 0.0)
+    tempo_medio_campanha = locals().get('tempo_medio_campanha', 0.0)
+    camp_atendidas = locals().get('camp_atendidas', 0.0)
+    total_investimento_novo = locals().get('total_investimento_novo', 0.0)
+    total_vendas_novo = locals().get('total_vendas_novo', 0)
+    producao_novo = locals().get('producao_novo', 0.0)
+    total_engajados = locals().get('total_engajados', 0)
+    roi_novo = locals().get('roi_novo', 0.0)
+    acoes_realizadas = locals().get('acoes_realizadas', 0)
+    acoes_efetivas = locals().get('acoes_efetivas', 0.0)
+    total_investimento_segundo = locals().get('total_investimento_segundo', 0.0)
+    tempo_medio_acao = locals().get('tempo_medio_acao', 0.0)
+    total_vendas_segundo = locals().get('total_vendas_segundo', 0)
+    producao_segundo = locals().get('producao_segundo', 0.0)
+    # Garantir que total_efetivos mantenha o valor correto do AD
+    if 'total_efetivos' not in locals() or locals().get('total_efetivos', 0) == 0:
+        total_efetivos = locals().get('ad_count', 0)
+    roi_segundo = locals().get('roi_segundo', 0.0)
+    
+
+    
+
+    
+
+>>>>>>> c6ff9f3 (Atualização geral)
     
 
     
@@ -3665,8 +4841,14 @@ def main():
                     Última atualização: {datetime.now().strftime('%d/%m %H:%M')}
                 </div>
                 <div style="font-size: 9px; color: #888; margin-top: 3px;">
+<<<<<<< HEAD
                     CPFs consultados: {len(st.session_state.get('cpfs_kolmeya_consultados', set()))} | Acessos: {st.session_state.get('acessos_kolmeya_count', 0)}
                 </div>
+=======
+                    Acessos: {st.session_state.get('acessos_kolmeya_count', 0)}
+                </div>
+                {f'<div style="font-size: 9px; color: #4CAF50; margin-top: 3px;">💰 FACTA: +{formatar_real(valor_facta_kolmeya)}</div>' if valor_facta_kolmeya > 0 else ''}
+>>>>>>> c6ff9f3 (Atualização geral)
             </div>
             <div class="metric-row">
                 <div class="metric-item">
@@ -3684,8 +4866,13 @@ def main():
                     <div class="metric-value-small">{formatar_real(investimento)}</div>
                 </div>
                 <div class="metric-item">
+<<<<<<< HEAD
                     <div class="metric-label">media por sms</div>
                     <div class="metric-value-small">{taxa_entrega:.1f}%</div>
+=======
+                    <div class="metric-label">custo por venda</div>
+                    <div class="metric-value-small">{formatar_real(investimento/max(total_vendas, 1))}</div>
+>>>>>>> c6ff9f3 (Atualização geral)
                 </div>
             </div>
             <div class="details-section">
@@ -3708,14 +4895,14 @@ def main():
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">Leads p/ venda</div>
-                        <div class="detail-value">{formatar_real(leads_p_venda)}</div>
+                        <div class="detail-value">{(leads_gerados_kolmeya/max(total_vendas, 1))}</div>
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">Disp. p/ venda</div>
-                        <div class="detail-value">{formatar_real(disp_venda)}</div>
+                        <div class="detail-value">{(total_mensagens/max(total_vendas, 1))}</div>
                     </div>
                 </div>
-            </div>
+               </div>
             <div class="roi-section">
                 <div class="roi-label">ROI</div>
                 <div class="roi-value">{formatar_real(roi)}</div>
@@ -3919,8 +5106,204 @@ def main():
     </div>
     """
     
+    # Seção de comparação automática de CPFs com base e pesquisa no FACTA (ANTES da renderização do painel)
+    st.markdown("---")
+    
+    
+    # Verificar se há base carregada e executar comparação automaticamente
+    if uploaded_file is not None and df_base is not None:
+        # Configurações da comparação (valores padrão)
+        ambiente_facta_comp = "producao"  # Ambiente padrão
+        dias_comparacao = 7  # Dias padrão
+        centro_custo_comp = "TODOS"  # Centro de custo padrão
+        
+        # Mostrar configurações usadas
+        col_comp1, col_comp2, col_comp3 = st.columns(3)
+        
+       
+        # Executar comparação automaticamente
+        try:
+       
+            
+            # Calcular datas para consulta no Kolmeya
+            data_fim_comp = datetime.now().date()
+            data_ini_comp = data_fim_comp - timedelta(days=dias_comparacao)
+            
+            # Mapear centro de custo
+            centro_custo_opcoes_comp = {
+                "TODOS": None,
+                "Novo": 8105,
+                "Crédito CLT": 8208,
+                "FGTS": 8103
+            }
+            tenant_segment_id_comp = centro_custo_opcoes_comp[centro_custo_comp]
+            
+            # Extrair CPFs da base carregada
+            
+            cpfs_base_comp = extrair_cpfs_da_base(df_base, data_ini, data_fim)
+            
+            
+            # Consultar CPFs do Kolmeya
+            
+            token_kolmeya = get_kolmeya_token()
+            if not token_kolmeya:
+                
+                st.stop()
+            
+            # Formatar datas para o formato esperado pela API
+            start_at_formatted = f"{data_ini_comp.strftime('%Y-%m-%d')} 00:00"
+            # Usar horário atual para evitar problemas com datas futuras
+            hora_atual = datetime.now().strftime('%H:%M')
+            end_at_formatted = f"{data_fim_comp.strftime('%Y-%m-%d')} {hora_atual}"
+            
+            cpfs_kolmeya_comp = consultar_cpfs_diretamente_kolmeya(
+                start_at=start_at_formatted,
+                end_at=end_at_formatted,
+                limit=30000,
+                token=token_kolmeya,
+                tenant_segment_id=tenant_segment_id_comp
+            )
+            
+            
+            # Padronizar CPFs da base
+            cpfs_base_padronizados = set()
+            for cpf in cpfs_base_comp:
+                cpf_limpo = limpar_cpf(str(cpf))
+                if cpf_limpo and len(cpf_limpo) == 11:
+                    cpfs_base_padronizados.add(cpf_limpo)
+            
+            # Padronizar CPFs do Kolmeya
+            cpfs_kolmeya_padronizados = set()
+            for cpf in cpfs_kolmeya_comp:
+                cpf_limpo = limpar_cpf(str(cpf))
+                if cpf_limpo and len(cpf_limpo) == 11:
+                    cpfs_kolmeya_padronizados.add(cpf_limpo)
+            
+            # CPFs que estão em AMBOS (base e Kolmeya)
+            cpfs_coincidentes_comp = cpfs_base_padronizados & cpfs_kolmeya_padronizados
+            
+            
+            
+            # Mostrar estatísticas
+            col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
+          
+            
+            with col_stats4:
+                percentual = (len(cpfs_coincidentes_comp) / len(cpfs_base_padronizados) * 100) if cpfs_base_padronizados else 0
+                
+            
+            # Se há CPFs coincidentes, fazer pesquisa no FACTA
+            if cpfs_coincidentes_comp:
+                
+                
+                # Obter token do FACTA
+                token_facta = get_facta_token()
+                if not token_facta:
+                    
+                    st.stop()
+                
+                # Testar conectividade com FACTA
+                if not testar_api_facta(token=token_facta, ambiente=ambiente_facta_comp):
+                    
+                    st.stop()
+                
+                # Consultar propostas no FACTA para os CPFs coincidentes
+                propostas_encontradas = []
+                cpfs_com_propostas = []
+                
+                # Converter para lista para processamento
+                cpfs_coincidentes_list = list(cpfs_coincidentes_comp)
+                
+                # Processar em lotes para não sobrecarregar a API
+                tamanho_lote = 50
+                total_lotes = (len(cpfs_coincidentes_list) + tamanho_lote - 1) // tamanho_lote
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i in range(0, len(cpfs_coincidentes_list), tamanho_lote):
+                        lote_cpfs = cpfs_coincidentes_list[i:i + tamanho_lote]
+                        lote_atual = (i // tamanho_lote) + 1
+                        
+                        status_text.text(f"🔍 Processando lote {lote_atual}/{total_lotes} ({len(lote_cpfs)} CPFs)...")
+                        
+                        # Consultar propostas para este lote de CPFs
+                        for cpf in lote_cpfs:
+                            try:
+                                # Consultar propostas específicas do CPF no FACTA
+                                propostas_cpf = consultar_andamento_propostas_facta(
+                                    cpfs=[cpf],
+                                    token=token_facta,
+                                    ambiente=ambiente_facta_comp
+                                )
+                                
+                                if propostas_cpf:
+                                    propostas_encontradas.extend(propostas_cpf)
+                                    cpfs_com_propostas.append(cpf)
+                                
+                            except Exception as e:
+                                st.warning(f"⚠️ Erro ao consultar CPF {cpf}: {str(e)}")
+                                continue
+                        
+                        # Atualizar progresso
+                        progress_bar.progress(lote_atual / total_lotes)
+                
+                progress_bar.empty()
+                status_text.empty()
+                
+                # Mostrar resultados da pesquisa no FACTA
+               
+                # Mostrar detalhes das propostas encontradas
+                if propostas_encontradas:
+                    st.markdown("#### 📋 Propostas Encontradas no FACTA")
+                    
+                    # Criar DataFrame para exibição
+                    df_propostas_comp = pd.DataFrame(propostas_encontradas)
+                    
+                    # Formatar valores monetários
+                    if "valor_af" in df_propostas_comp.columns:
+                        df_propostas_comp["valor_af_formatado"] = df_propostas_comp["valor_af"].apply(formatar_real)
+                    
+                    if "valor_bruto" in df_propostas_comp.columns:
+                        df_propostas_comp["valor_bruto_formatado"] = df_propostas_comp["valor_bruto"].apply(formatar_real)
+                    
+                    # Mostrar tabela
+                    st.dataframe(df_propostas_comp, use_container_width=True)
+                    
+                    
+                    
+                    # Resumo financeiro
+                    if "valor_af" in df_propostas_comp.columns:
+                        valor_total_af = df_propostas_comp["valor_af"].sum()
+                        valor_medio_af = df_propostas_comp["valor_af"].mean()
+                        
+                        # Armazenar valor total AF e CPFs com propostas para usar no painel do Kolmeya
+                        st.session_state.valor_facta_kolmeya = valor_total_af
+                        st.session_state.cpfs_com_propostas_facta = len(cpfs_com_propostas)
+                        
+                        col_fin1, col_fin2, col_fin3 = st.columns(3)
+                        
+                else:
+                    st.warning("⚠️ Nenhuma proposta encontrada no FACTA para os CPFs coincidentes.")
+            else:
+                st.warning("⚠️ Nenhum CPF coincidente encontrado entre a base e o Kolmeya.")
+                
+        except Exception as e:
+            st.error(f"❌ Erro na comparação de CPFs: {str(e)}")
+            st.exception(e)
+    else:
+        st.warning("⚠️ Carregue uma base de dados primeiro para executar a comparação de CPFs.")
+    
+    # Botão para limpar valores do FACTA
+    if st.button("🗑️ Limpar Valores FACTA do Painel", key="btn_limpar_facta"):
+        st.session_state.valor_facta_kolmeya = 0.0
+        st.session_state.cpfs_com_propostas_facta = 0
+        st.success("✅ Valores do FACTA foram removidos do painel Kolmeya!")
+        st.rerun()
+    
     components.html(dashboard_html, height=800)
     
+<<<<<<< HEAD
     # Debug final: Mostrar valores que estão sendo exibidos nos painéis
     print(f"🔍 DEBUG FINAL - Valores exibidos nos painéis:")
     print(f"   💰 Painel AD - Produção: R$ {producao_segundo:,.2f}")
@@ -3933,6 +5316,9 @@ def main():
     print(f"   📈 Painel Kolmeya - Vendas: {total_vendas}")
     
     # Inicializar variáveis
+=======
+    
+>>>>>>> c6ff9f3 (Atualização geral)
     total_leads_gerados = 0
     telefones_base = 0
             
@@ -3949,7 +5335,10 @@ def main():
     custo_venda = 0.0
     media_venda = 0.0
 
+<<<<<<< HEAD
     # Upload de base local (seção de comparação)
+=======
+>>>>>>> c6ff9f3 (Atualização geral)
     if uploaded_file is not None and df_base is not None:
         try:
             
@@ -3975,6 +5364,12 @@ def main():
                 print(f"🔍 Leads Gerados - Base: {len(telefones_base_todos)}, Kolmeya: {len(telefones_kolmeya)}, Coincidentes: {total_leads_gerados}")
             else:
                 # Se não há mensagens do Kolmeya, usar apenas dados da URA
+                # Inicializar variáveis URA com valores padrão se não estiverem definidas
+                if 'ura_count' not in locals() and 'ura_count' not in globals():
+                    ura_count = 0
+                if 'ura_por_status' not in locals() and 'ura_por_status' not in globals():
+                    ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+                
                 if centro_custo_selecionado == "Novo":
                     total_leads_gerados = ura_por_status.get('Novo', 0)
                 elif centro_custo_selecionado == "FGTS":
@@ -3991,6 +5386,10 @@ def main():
             pass
     else:
         # Se não há base carregada, usar apenas dados da URA (painel 4NET)
+        # Inicializar variáveis URA com valores padrão
+        ura_count = 0
+        ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+        
         if centro_custo_selecionado == "Novo":
             total_leads_gerados = ura_por_status.get('Novo', 0)
         elif centro_custo_selecionado == "FGTS":
@@ -4086,80 +5485,118 @@ def test_environment_status():
         except Exception as e:
             st.sidebar.error(f"❌ Erro: {str(e)[:50]}...")
     
-    # Botão para teste da Facta
-    if st.sidebar.button("🔍 Teste Facta"):
+    # Botão para teste da API FACTA
+    if st.sidebar.button("🔍 Teste API FACTA"):
         try:
-            # Teste com um CPF específico
-            cpf_teste = "12345678901"  # CPF de teste
-            propostas = consultar_facta_por_cpf(cpf_teste)
-            if propostas is not None:
-                st.sidebar.success(f"✅ API Facta funcionando - {len(propostas)} propostas")
-            else:
-                st.sidebar.warning("⚠️ API Facta retornou None")
-        except Exception as e:
-            st.sidebar.error(f"❌ Erro na API Facta: {str(e)[:50]}...")
-    
-    # Botão para teste da Facta com CPF real
-    if st.sidebar.button("🧪 Teste Facta CPF Real"):
-        try:
-            # Teste com um CPF real (exemplo)
-            cpf_teste = "12345678901"  # Substitua por um CPF real se tiver
-            st.sidebar.info(f"Testando CPF: {cpf_teste}")
+            # Testar em ambos os ambientes
+            st.sidebar.info("🧪 Testando API FACTA...")
             
-            # Verificar token primeiro
-            token = get_facta_token()
-            if not token:
-                st.sidebar.error("❌ Token da Facta não encontrado")
+            # Teste em homologação
+            st.sidebar.write("**Homologação:**")
+            if testar_api_facta(ambiente="homologacao"):
+                st.sidebar.success("✅ Homologação: OK")
             else:
-                st.sidebar.success(f"✅ Token encontrado: {token[:10]}...")
+                st.sidebar.error("❌ Homologação: Falha")
+            
+            # Teste em produção
+            st.sidebar.write("**Produção:**")
+            if testar_api_facta(ambiente="producao"):
+                st.sidebar.success("✅ Produção: OK")
+            else:
+                st.sidebar.error("❌ Produção: Falha")
                 
-                # Testar consulta
-                propostas = consultar_facta_por_cpf(cpf_teste)
-                if propostas is not None:
-                    st.sidebar.success(f"✅ Consulta funcionando - {len(propostas)} propostas")
-                else:
-                    st.sidebar.warning("⚠️ Consulta retornou None")
         except Exception as e:
             st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
     
-    # Botão para limpar cache da Facta
-    if st.sidebar.button("🗑️ Limpar Cache Facta"):
-        global facta_cache
-        cache_size = len(facta_cache)
-        facta_cache.clear()
-        st.sidebar.success("✅ Cache da Facta limpo!")
-        st.sidebar.info(f"Cache tinha {cache_size} entradas")
-    
-    # Botão para forçar consulta Facta
-    if st.sidebar.button("🚀 Forçar Consulta Facta"):
+    # Botão para teste dos envios do Kolmeya
+    if st.sidebar.button("📨 Teste Envios Kolmeya"):
         try:
-            # Teste com CPFs de exemplo
-            cpfs_teste = ["12345678901", "98765432100", "11122233344"]
-            st.sidebar.info(f"Testando com {len(cpfs_teste)} CPFs de exemplo")
+            st.sidebar.info("🧪 Testando envios do Kolmeya...")
             
-            # Verificar token
-            token = get_facta_token()
-            if not token:
-                st.sidebar.error("❌ Token da Facta não encontrado")
+            # Testar envios dos últimos 7 dias
+            messages, total_acessos = obter_dados_sms_com_filtro(
+                data_ini=(datetime.now() - timedelta(days=7)).date(),
+                data_fim=datetime.now().date(),
+                tenant_segment_id=None
+            )
+            
+            if messages:
+                st.sidebar.success(f"✅ Mensagens encontradas: {len(messages)}")
+                
+                # Extrair CPFs
+                cpfs = extrair_cpfs_kolmeya(messages)
+                st.sidebar.info(f"🆔 CPFs únicos: {len(cpfs)}")
+                
+                if cpfs:
+                    st.sidebar.write("**Primeiros 5 CPFs:**")
+                    for i, cpf in enumerate(list(cpfs)[:5]):
+                        st.sidebar.write(f"{i+1}. {cpf}")
             else:
-                st.sidebar.success(f"✅ Token encontrado: {token[:10]}...")
+                st.sidebar.error("❌ Nenhuma mensagem encontrada")
                 
-                # Testar consulta
-                resultados = consultar_facta_multiplos_cpfs(
-                    cpfs_teste, 
-                    token=token, 
-                    max_workers=2, 
-                    data_ini=datetime.now().date() - timedelta(days=30), 
-                    data_fim=datetime.now().date()
-                )
-                
-                if resultados:
-                    cpfs_com_resultado = sum(1 for propostas in resultados.values() if propostas)
-                    st.sidebar.success(f"✅ Consulta funcionando - {cpfs_com_resultado} CPFs com propostas")
-                else:
-                    st.sidebar.warning("⚠️ Consulta retornou vazio")
         except Exception as e:
             st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
+    
+    # Botão para teste do endpoint direto
+    if st.sidebar.button("🎯 Teste Endpoint Direto"):
+        try:
+            st.sidebar.info("🧪 Testando endpoint direto (status SMS)...")
+            
+            # Testar endpoint direto dos últimos 7 dias
+            start_at = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+            end_at = datetime.now().strftime('%Y-%m-%d')
+            
+            cpfs = consultar_cpfs_diretamente_kolmeya(
+                start_at=f"{start_at} 00:00",
+                end_at=f"{end_at} 23:59",
+                limit=30000,
+                token=None,
+                tenant_segment_id=None
+            )
+            
+            if cpfs:
+                st.sidebar.success(f"✅ CPFs encontrados: {len(cpfs)}")
+                
+                if cpfs:
+                    st.sidebar.write("**Primeiros 5 CPFs:**")
+                    for i, cpf in enumerate(cpfs[:5]):
+                        st.sidebar.write(f"{i+1}. {cpf}")
+            else:
+                st.sidebar.error("❌ Nenhum CPF encontrado")
+                
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
+    
+    # Botão para teste da comparação CPFs
+    if st.sidebar.button("🔍 Teste Comparação CPFs"):
+        try:
+            st.sidebar.info("🧪 Testando comparação CPFs FACTA vs Kolmeya...")
+            
+            # Testar comparação dos últimos 3 dias
+            start_at = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
+            end_at = datetime.now().strftime('%Y-%m-%d')
+            
+            resultado = comparar_cpfs_facta_kolmeya(
+                start_at=start_at,
+                end_at=end_at,
+                ambiente_facta="homologacao",
+                tenant_segment_id=None
+            )
+            
+            if "erro" not in resultado:
+                st.sidebar.success("✅ Comparação concluída!")
+                st.sidebar.write(f"📱 Kolmeya: {resultado['total_kolmeya']} CPFs")
+                st.sidebar.write(f"📋 FACTA: {resultado['total_facta']} CPFs")
+                st.sidebar.write(f"✅ Coincidentes: {resultado['total_coincidentes']} CPFs")
+                st.sidebar.write(f"📈 % Coincidentes: {resultado['percentual_coincidentes_kolmeya']:.1f}%")
+            else:
+                st.sidebar.error(f"❌ Erro: {resultado['erro']}")
+                
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro no teste: {str(e)[:50]}...")
+    
+
+
 
 
 if __name__ == "__main__":
