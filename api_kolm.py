@@ -1846,8 +1846,13 @@ def ler_base(uploaded_file):
     else:
         return pd.read_excel(uploaded_file, dtype=str)
 
-def extrair_ura_da_base(df, data_ini=None, data_fim=None):
+def extrair_ura_da_base(df, data_ini=None, data_fim=None, apenas_fgts=False):
     """Extrai e conta registros com UTM source = 'URA' da base carregada, separados por status e opcionalmente filtrados por data."""
+    print(f"🔍 DEBUG - INICIANDO extrair_ura_da_base")
+    print(f"   📊 DataFrame shape: {df.shape if df is not None else 'None'}")
+    print(f"   📋 Colunas disponíveis: {list(df.columns) if df is not None else 'None'}")
+    print(f"   🎯 Apenas FGTS: {apenas_fgts}")
+    
     ura_count = 0
     ura_por_status = {
         'Novo': 0,
@@ -1862,9 +1867,12 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
         'Outros': set()
     }
     
+    # NOVO: Lista para armazenar todos os registros URA encontrados
+    registros_ura = []
+    
     # Verifica se há dados válidos na base
     if df is None or df.empty:
-        return ura_count, ura_por_status, ura_cpfs_por_status
+        return ura_count, ura_por_status, ura_cpfs_por_status, registros_ura
     
     # Procura por colunas que podem conter UTM source
     colunas_utm = []
@@ -1887,7 +1895,7 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
     
     # Se não encontrou nenhuma coluna UTM, retorna zeros
     if not colunas_utm:
-        return ura_count, ura_por_status, ura_cpfs_por_status
+        return ura_count, ura_por_status, ura_cpfs_por_status, registros_ura
     
     # Procura por colunas que podem conter CPFs
     colunas_cpf = []
@@ -1913,19 +1921,34 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
             if 'status' in col.lower():
                 colunas_status.append(col)
     
-    # Procura por colunas de data
+    # MELHORIA: Procura por colunas de data com prioridade para colunas específicas
     colunas_data = []
+    colunas_data_prioridade = []
+    
+    # Primeiro, procura por colunas com nomes específicos (prioridade alta)
     for col in df.columns:
         col_lower = col.lower()
-        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+        if any(keyword in col_lower for keyword in ['data criacao', 'data_criacao', 'criacao', 'created', 'data_created']):
+            colunas_data_prioridade.append(col)
+        elif any(keyword in col_lower for keyword in ['data', 'date', 'timestamp', 'hora', 'time']):
             colunas_data.append(col)
+    
+    # Usa as colunas de prioridade alta primeiro, depois as outras
+    colunas_data_finais = colunas_data_prioridade + colunas_data
     
     # Conta registros com valor "URA"
     print(f"🔍 DEBUG - Extraindo URA da base:")
     print(f"   📊 Total de registros na base: {len(df)}")
     print(f"   📅 Filtro de data: {data_ini} a {data_fim}")
-    print(f"   📋 Colunas de data encontradas: {colunas_data}")
+    print(f"   📋 Colunas de data encontradas: {colunas_data_finais}")
     print(f"   📋 Colunas UTM encontradas: {colunas_utm}")
+    
+    # Debug: Mostrar alguns valores das colunas de data para verificar formato
+    if colunas_data_finais:
+        print(f"🔍 DEBUG - Verificando formato das colunas de data:")
+        for col in colunas_data_finais[:3]:  # Primeiras 3 colunas de data
+            valores_unicos = df[col].dropna().unique()
+            print(f"   📋 Coluna '{col}': {valores_unicos[:5]}")  # Primeiros 5 valores
     
     for idx, row in df.iterrows():
         # Verifica se tem UTM source = "URA"
@@ -1939,85 +1962,87 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                     break
         
         if tem_ura:
-            # Se há filtro de data, verifica se está no período
-            if data_ini and data_fim and colunas_data:
-                data_valida = False
-                for col in colunas_data:
+            # MELHORIA: Filtro de data mais inteligente
+            data_valida = False
+            data_encontrada = None
+            
+            if data_ini and data_fim and colunas_data_finais:
+                # Tenta encontrar uma data válida nas colunas de data
+                for col in colunas_data_finais:
                     try:
                         data_str = str(row[col])
                         if pd.notna(data_str) and data_str.strip():
                             # Tenta diferentes formatos de data
                             data_criacao = None
                             
-                            # Formato: DD/MM/YYYY HH:MM
-                            if len(data_str) >= 16 and '/' in data_str:
-                                data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                            # Formato: DD/MM/YYYY HH:MM (formato brasileiro)
+                            if len(data_str) >= 16 and '/' in data_str and ':' in data_str:
+                                try:
+                                    data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                                except ValueError:
+                                    # Tentar formato sem segundos
+                                    if len(data_str) >= 19:
+                                        data_criacao = datetime.strptime(data_str[:19], '%d/%m/%Y %H:%M:%S')
                             # Formato: DD/MM/YYYY
                             elif len(data_str) == 10 and '/' in data_str:
                                 data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
                             # Formato: YYYY-MM-DD HH:MM:SS
-                            elif len(data_str) >= 19:
-                                data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                            elif len(data_str) >= 19 and '-' in data_str:
+                                try:
+                                    data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                                except ValueError:
+                                    # Tentar formato sem segundos
+                                    if len(data_str) >= 16:
+                                        data_criacao = datetime.strptime(data_str[:16], '%Y-%m-%d %H:%M')
                             # Formato: YYYY-MM-DD
-                            elif len(data_str) == 10:
+                            elif len(data_str) == 10 and '-' in data_str:
                                 data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
                             
                             if data_criacao:
                                 data_ini_dt = datetime.combine(data_ini, datetime.min.time())
                                 data_fim_dt = datetime.combine(data_fim, datetime.max.time())
+                                
+                                # Debug para os primeiros registros
+                                if ura_count < 3:
+                                    print(f"   🔍 DEBUG - Registro URA linha {idx + 1}:")
+                                    print(f"      📅 Data encontrada: {data_str} -> {data_criacao}")
+                                    print(f"      📅 Range filtro: {data_ini_dt} a {data_fim_dt}")
+                                    print(f"      ✅ Data válida: {data_ini_dt <= data_criacao <= data_fim_dt}")
+                                
                                 if data_ini_dt <= data_criacao <= data_fim_dt:
                                     data_valida = True
+                                    data_encontrada = data_criacao
                                     break
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as e:
+                        if ura_count < 3:
+                            print(f"      ❌ Erro ao parsear data '{data_str}': {e}")
                         continue
-                
-                # Se não há filtro de data ou se a data está no período, conta o registro
-                if not data_ini or not data_fim or data_valida:
-                    ura_count += 1
-                    # Extrai CPF do registro
-                    cpf_encontrado = None
-                    for col in colunas_cpf:
-                        valor_cpf = row[col] if col in row else None
-                        if valor_cpf is not None:
-                            valor_cpf_str = str(valor_cpf).strip()
-                            # Usar a nova função de limpeza de CPF
-                            cpf_limpo = limpar_cpf(valor_cpf_str)
-                            if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                                cpf_encontrado = cpf_limpo
-                                break
-                    
-                    # Categoriza por status
-                    status_encontrado = False
+            else:
+                # Se não há filtro de data, considerar válido
+                data_valida = True
+            
+            # Se a data é válida ou não há filtro, processar o registro
+            if data_valida:
+                # NOVO: Verificar se deve filtrar apenas FGTS
+                if apenas_fgts:
+                    # Verificar se o registro é de FGTS
+                    eh_fgts = False
                     for col in colunas_status:
                         valor_status = row[col] if col in row else None
                         if valor_status is not None:
                             valor_status_str = str(valor_status).strip().upper()
-                            if valor_status_str.startswith('INSS'):
-                                ura_por_status['Novo'] += 1
-                                if cpf_encontrado:
-                                    ura_cpfs_por_status['Novo'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                            elif valor_status_str.startswith('FGTS'):
-                                ura_por_status['FGTS'] += 1
-                                if cpf_encontrado:
-                                    ura_cpfs_por_status['FGTS'].add(cpf_encontrado)
-                                status_encontrado = True
-                                break
-                            elif valor_status_str.startswith('CLT'):
-                                ura_por_status['CLT'] += 1
-                                if cpf_encontrado:
-                                    ura_cpfs_por_status['CLT'].add(cpf_encontrado)
-                                status_encontrado = True
+                            if valor_status_str.startswith('FGTS'):
+                                eh_fgts = True
                                 break
                     
-                    if not status_encontrado:
-                        ura_por_status['Outros'] += 1
-                        if cpf_encontrado:
-                            ura_cpfs_por_status['Outros'].add(cpf_encontrado)
-            else:
-                # Se não há filtro de data, conta todos os registros URA
+                    # Se não é FGTS e estamos filtrando apenas FGTS, pular
+                    if not eh_fgts:
+                        if ura_count < 3:
+                            print(f"      ❌ Registro URA REJEITADO (não é FGTS)")
+                        continue
+                
                 ura_count += 1
+                
                 # Extrai CPF do registro
                 cpf_encontrado = None
                 for col in colunas_cpf:
@@ -2059,14 +2084,56 @@ def extrair_ura_da_base(df, data_ini=None, data_fim=None):
                     ura_por_status['Outros'] += 1
                     if cpf_encontrado:
                         ura_cpfs_por_status['Outros'].add(cpf_encontrado)
+                
+                # Adicionar registro completo à lista com informações de data
+                status_registro = 'Outros'
+                for col in colunas_status:
+                    valor_status = row[col] if col in row else None
+                    if valor_status is not None:
+                        valor_status_str = str(valor_status).strip().upper()
+                        if valor_status_str.startswith('INSS'):
+                            status_registro = 'Novo'
+                            break
+                        elif valor_status_str.startswith('FGTS'):
+                            status_registro = 'FGTS'
+                            break
+                        elif valor_status_str.startswith('CLT'):
+                            status_registro = 'CLT'
+                            break
+                
+                registro_ura = {
+                    'linha': idx + 1,  # +1 para linha humana (não índice)
+                    'cpf': cpf_encontrado,
+                    'status': status_registro,
+                    'data_encontrada': data_encontrada.strftime('%d/%m/%Y %H:%M') if data_encontrada else 'N/A',
+                    'dados_completos': row.to_dict()
+                }
+                registros_ura.append(registro_ura)
+                
+                if ura_count <= 3:
+                    print(f"      ✅ Registro URA ACEITO (Total: {ura_count})")
+            else:
+                if ura_count < 3:
+                    print(f"      ❌ Registro URA REJEITADO pelo filtro de data")
     
     # Log final dos resultados
     print(f"🔍 DEBUG - Resultados da extração URA:")
     print(f"   📊 Total de registros URA encontrados: {ura_count}")
     print(f"   📋 Distribuição por status: {ura_por_status}")
     print(f"   📋 CPFs únicos por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
+    print(f"   📋 Total de registros URA retornados: {len(registros_ura)}")
     
-    return ura_count, ura_por_status, ura_cpfs_por_status
+    # Debug adicional: Mostrar distribuição por data se houver filtro
+    if data_ini and data_fim and registros_ura:
+        print(f"🔍 DEBUG - Distribuição por data dos registros URA:")
+        datas_unicas = set()
+        for reg in registros_ura:
+            if reg['data_encontrada'] != 'N/A':
+                datas_unicas.add(reg['data_encontrada'][:10])  # Apenas a data (DD/MM/YYYY)
+        
+        print(f"   📅 Datas únicas encontradas: {sorted(list(datas_unicas))}")
+    
+    return ura_count, ura_por_status, ura_cpfs_por_status, registros_ura
 
 def filtrar_mensagens_por_data(messages, data_ini, data_fim):
     """Filtra mensagens do Kolmeya por período de data."""
@@ -2146,7 +2213,7 @@ def obter_cpfs_fgts_4net_kolmeya(uploaded_file, data_ini, data_fim, messages):
     if uploaded_file is not None:
         try:
             df_base = ler_base(uploaded_file)
-            ura_count, ura_por_status, ura_cpfs_por_status = extrair_ura_da_base(df_base, data_ini, data_fim)
+            ura_count, ura_por_status, ura_cpfs_por_status, registros_ura = extrair_ura_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
             
             # Adicionar CPFs de FGTS do 4NET
             cpfs_fgts.update(ura_cpfs_por_status.get('FGTS', set()))
@@ -2167,11 +2234,12 @@ def obter_cpfs_fgts_4net_kolmeya(uploaded_file, data_ini, data_fim, messages):
     
     return cpfs_fgts
 
-def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
+def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None, apenas_fgts=False):
     """Extrai e conta registros com UTM source = 'WHATSAPP_MKT' da base carregada, separados por status e opcionalmente filtrados por data."""
     print(f"🔍 DEBUG - INICIANDO extrair_whatsapp_da_base")
     print(f"   📊 DataFrame shape: {df.shape if df is not None else 'None'}")
     print(f"   📋 Colunas disponíveis: {list(df.columns) if df is not None else 'None'}")
+    print(f"   🎯 Apenas FGTS: {apenas_fgts}")
     
     whatsapp_count = 0
     whatsapp_por_status = {
@@ -2187,10 +2255,13 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
         'Outros': set()
     }
     
+    # NOVO: Lista para armazenar todos os registros WhatsApp encontrados
+    registros_whatsapp = []
+    
     # Verifica se há dados válidos na base
     if df is None or df.empty:
         print(f"   ⚠️ DataFrame vazio ou None")
-        return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+        return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status, registros_whatsapp
     
     # Procura por colunas que podem conter UTM source
     colunas_utm = []
@@ -2215,7 +2286,7 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
     if not colunas_utm:
         print(f"   ❌ NENHUMA coluna UTM encontrada!")
         print(f"   📋 Todas as colunas: {list(df.columns)}")
-        return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+        return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status, registros_whatsapp
     else:
         print(f"   ✅ Colunas UTM encontradas: {colunas_utm}")
     
@@ -2243,18 +2314,26 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
             if 'status' in col.lower():
                 colunas_status.append(col)
     
-    # Procura por colunas de data
+    # MELHORIA: Procura por colunas de data com prioridade para colunas específicas
     colunas_data = []
+    colunas_data_prioridade = []
+    
+    # Primeiro, procura por colunas com nomes específicos (prioridade alta)
     for col in df.columns:
         col_lower = col.lower()
-        if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
+        if any(keyword in col_lower for keyword in ['data criacao', 'data_criacao', 'criacao', 'created', 'data_created']):
+            colunas_data_prioridade.append(col)
+        elif any(keyword in col_lower for keyword in ['data', 'date', 'timestamp', 'hora', 'time']):
             colunas_data.append(col)
+    
+    # Usa as colunas de prioridade alta primeiro, depois as outras
+    colunas_data_finais = colunas_data_prioridade + colunas_data
     
     # Conta registros com valor "WHATSAPP_MKT"
     print(f"🔍 DEBUG - Extraindo WhatsApp da base:")
     print(f"   📊 Total de registros na base: {len(df)}")
     print(f"   📅 Filtro de data: {data_ini} a {data_fim}")
-    print(f"   📋 Colunas de data encontradas: {colunas_data}")
+    print(f"   📋 Colunas de data encontradas: {colunas_data_finais}")
     print(f"   📋 Colunas UTM encontradas: {colunas_utm}")
     
     # Debug: Verificar alguns valores da coluna UTM
@@ -2264,11 +2343,11 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
         print(f"   📋 Valores únicos encontrados: {valores_unicos[:10]}")  # Primeiros 10 valores
         
         # Verificar especificamente por "WHATSAPP_MKT"
-        registros_whatsapp = df[df[colunas_utm[0]].str.upper() == "WHATSAPP_MKT"]
-        print(f"   📊 Registros com 'WHATSAPP_MKT' encontrados: {len(registros_whatsapp)}")
-        if len(registros_whatsapp) > 0:
+        registros_whatsapp_temp = df[df[colunas_utm[0]].str.upper() == "WHATSAPP_MKT"]
+        print(f"   📊 Registros com 'WHATSAPP_MKT' encontrados: {len(registros_whatsapp_temp)}")
+        if len(registros_whatsapp_temp) > 0:
             print(f"   📋 Primeiros registros WhatsApp:")
-            for idx, row in registros_whatsapp.head(3).iterrows():
+            for idx, row in registros_whatsapp_temp.head(3).iterrows():
                 print(f"      Linha {idx}: {row[colunas_utm[0]]}")
     else:
         print(f"   ❌ Nenhuma coluna UTM encontrada!")
@@ -2287,128 +2366,189 @@ def extrair_whatsapp_da_base(df, data_ini=None, data_fim=None):
                     break
         
         if tem_whatsapp:
-            # Se há filtro de data, verifica se está no período
-            if data_ini and data_fim and colunas_data:
-                data_valida = False
-                if whatsapp_count < 3:  # Debug para os primeiros registros
-                    print(f"   🔍 DEBUG - Verificando filtro de data para registro WhatsApp linha {idx}")
-                    print(f"      📅 Filtro: {data_ini} a {data_fim}")
-                
-                for col in colunas_data:
+            # MELHORIA: Filtro de data mais inteligente
+            data_valida = False
+            data_encontrada = None
+            
+            if data_ini and data_fim and colunas_data_finais:
+                # Tenta encontrar uma data válida nas colunas de data
+                for col in colunas_data_finais:
                     try:
                         data_str = str(row[col])
                         if pd.notna(data_str) and data_str.strip():
-                            if whatsapp_count < 3:
-                                print(f"      📋 Coluna '{col}': '{data_str}'")
-                            
                             # Tenta diferentes formatos de data
                             data_criacao = None
                             
-                            # Formato: DD/MM/YYYY HH:MM
-                            if len(data_str) >= 16 and '/' in data_str:
-                                data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                            # Formato: DD/MM/YYYY HH:MM (formato brasileiro)
+                            if len(data_str) >= 16 and '/' in data_str and ':' in data_str:
+                                try:
+                                    data_criacao = datetime.strptime(data_str[:16], '%d/%m/%Y %H:%M')
+                                except ValueError:
+                                    # Tentar formato sem segundos
+                                    if len(data_str) >= 19:
+                                        data_criacao = datetime.strptime(data_str[:19], '%d/%m/%Y %H:%M:%S')
                             # Formato: DD/MM/YYYY
                             elif len(data_str) == 10 and '/' in data_str:
                                 data_criacao = datetime.strptime(data_str, '%d/%m/%Y')
                             # Formato: YYYY-MM-DD HH:MM:SS
-                            elif len(data_str) >= 19:
-                                data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                            elif len(data_str) >= 19 and '-' in data_str:
+                                try:
+                                    data_criacao = datetime.strptime(data_str[:19], '%Y-%m-%d %H:%M:%S')
+                                except ValueError:
+                                    # Tentar formato sem segundos
+                                    if len(data_str) >= 16:
+                                        data_criacao = datetime.strptime(data_str[:16], '%Y-%m-%d %H:%M')
                             # Formato: YYYY-MM-DD
-                            elif len(data_str) == 10:
+                            elif len(data_str) == 10 and '-' in data_str:
                                 data_criacao = datetime.strptime(data_str, '%Y-%m-%d')
                             
                             if data_criacao:
                                 data_ini_dt = datetime.combine(data_ini, datetime.min.time())
                                 data_fim_dt = datetime.combine(data_fim, datetime.max.time())
                                 
+                                # Debug para os primeiros registros
                                 if whatsapp_count < 3:
-                                    print(f"      📅 Data parseada: {data_criacao}")
+                                    print(f"   🔍 DEBUG - Registro WhatsApp linha {idx + 1}:")
+                                    print(f"      📅 Data encontrada: {data_str} -> {data_criacao}")
                                     print(f"      📅 Range filtro: {data_ini_dt} a {data_fim_dt}")
                                     print(f"      ✅ Data válida: {data_ini_dt <= data_criacao <= data_fim_dt}")
                                 
                                 if data_ini_dt <= data_criacao <= data_fim_dt:
                                     data_valida = True
+                                    data_encontrada = data_criacao
                                     break
                     except (ValueError, TypeError) as e:
                         if whatsapp_count < 3:
                             print(f"      ❌ Erro ao parsear data '{data_str}': {e}")
                         continue
+            else:
+                # Se não há filtro de data, considerar válido
+                data_valida = True
+            
+            # Se a data é válida ou não há filtro, processar o registro
+            if data_valida:
+                # NOVO: Verificar se deve filtrar apenas FGTS
+                if apenas_fgts:
+                    # Verificar se o registro é de FGTS
+                    eh_fgts = False
+                    for col in colunas_status:
+                        valor_status = row[col] if col in row else None
+                        if valor_status is not None:
+                            valor_status_str = str(valor_status).strip().upper()
+                            if valor_status_str.startswith('FGTS'):
+                                eh_fgts = True
+                                break
+                    
+                    # Se não é FGTS e estamos filtrando apenas FGTS, pular
+                    if not eh_fgts:
+                        if whatsapp_count < 3:
+                            print(f"      ❌ Registro WhatsApp REJEITADO (não é FGTS)")
+                        continue
                 
-                # Se não há filtro de data ou se a data está no período, conta o registro
-                if not data_ini or not data_fim or data_valida:
-                    whatsapp_count += 1
-                    if whatsapp_count <= 3:
-                        print(f"      ✅ Registro WhatsApp ACEITO pelo filtro de data (Total: {whatsapp_count})")
-                else:
-                    if whatsapp_count < 3:
-                        print(f"      ❌ Registro WhatsApp REJEITADO pelo filtro de data")
-                    continue  # Pula para o próximo registro se a data não for válida
-            
-            # Extrai CPF do registro (apenas se o registro foi aceito)
-            cpf_encontrado = None
-            for col in colunas_cpf:
-                valor_cpf = row[col] if col in row else None
-                if valor_cpf is not None:
-                    valor_cpf_str = str(valor_cpf).strip()
-                    # Usar a nova função de limpeza de CPF
-                    cpf_limpo = limpar_cpf(valor_cpf_str)
-                    if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                        cpf_encontrado = cpf_limpo
-                        if whatsapp_count <= 5:  # Mostrar apenas os primeiros 5 para debug
-                            print(f"      ✅ CPF encontrado na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
-                        break
-                    elif whatsapp_count <= 3:  # Mostrar apenas os primeiros 3 para debug
-                        print(f"      ⚠️ CPF inválido na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
-            
-            # Categoriza por status
-            status_encontrado = False
-            for col in colunas_status:
-                valor_status = row[col] if col in row else None
-                if valor_status is not None:
-                    valor_status_str = str(valor_status).strip().upper()
-                    if valor_status_str.startswith('INSS'):
-                        whatsapp_por_status['Novo'] += 1
-                        if cpf_encontrado:
-                            whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
-                        status_encontrado = True
-                        break
-                    elif valor_status_str.startswith('FGTS'):
-                        whatsapp_por_status['FGTS'] += 1
-                        if cpf_encontrado:
-                            whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
-                        status_encontrado = True
-                        break
-                    elif valor_status_str.startswith('CLT'):
-                        whatsapp_por_status['CLT'] += 1
-                        if cpf_encontrado:
-                            whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
-                        status_encontrado = True
-                        break
-             
-            if not status_encontrado:
-                whatsapp_por_status['Outros'] += 1
-                if cpf_encontrado:
-                    whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
+                whatsapp_count += 1
+                
+                # Extrai CPF do registro
+                cpf_encontrado = None
+                for col in colunas_cpf:
+                    valor_cpf = row[col] if col in row else None
+                    if valor_cpf is not None:
+                        valor_cpf_str = str(valor_cpf).strip()
+                        # Usar a nova função de limpeza de CPF
+                        cpf_limpo = limpar_cpf(valor_cpf_str)
+                        if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
+                            cpf_encontrado = cpf_limpo
+                            if whatsapp_count <= 5:  # Mostrar apenas os primeiros 5 para debug
+                                print(f"      ✅ CPF encontrado na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
+                            break
+                        elif whatsapp_count <= 3:  # Mostrar apenas os primeiros 3 para debug
+                            print(f"      ⚠️ CPF inválido na coluna '{col}': '{valor_cpf}' -> '{cpf_limpo}'")
+                
+                # Categoriza por status
+                status_encontrado = False
+                for col in colunas_status:
+                    valor_status = row[col] if col in row else None
+                    if valor_status is not None:
+                        valor_status_str = str(valor_status).strip().upper()
+                        if valor_status_str.startswith('INSS'):
+                            whatsapp_por_status['Novo'] += 1
+                            if cpf_encontrado:
+                                whatsapp_cpfs_por_status['Novo'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('FGTS'):
+                            whatsapp_por_status['FGTS'] += 1
+                            if cpf_encontrado:
+                                whatsapp_cpfs_por_status['FGTS'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                        elif valor_status_str.startswith('CLT'):
+                            whatsapp_por_status['CLT'] += 1
+                            if cpf_encontrado:
+                                whatsapp_cpfs_por_status['CLT'].add(cpf_encontrado)
+                            status_encontrado = True
+                            break
+                 
+                if not status_encontrado:
+                    whatsapp_por_status['Outros'] += 1
+                    if cpf_encontrado:
+                        whatsapp_cpfs_por_status['Outros'].add(cpf_encontrado)
+                
+                # Adicionar registro completo à lista com informações de data
+                status_registro = 'Outros'
+                for col in colunas_status:
+                    valor_status = row[col] if col in row else None
+                    if valor_status is not None:
+                        valor_status_str = str(valor_status).strip().upper()
+                        if valor_status_str.startswith('INSS'):
+                            status_registro = 'Novo'
+                            break
+                        elif valor_status_str.startswith('FGTS'):
+                            status_registro = 'FGTS'
+                            break
+                        elif valor_status_str.startswith('CLT'):
+                            status_registro = 'CLT'
+                            break
+                
+                registro_whatsapp = {
+                    'linha': idx + 1,  # +1 para linha humana (não índice)
+                    'cpf': cpf_encontrado,
+                    'status': status_registro,
+                    'data_encontrada': data_encontrada.strftime('%d/%m/%Y %H:%M') if data_encontrada else 'N/A',
+                    'dados_completos': row.to_dict()
+                }
+                registros_whatsapp.append(registro_whatsapp)
+                
+                if whatsapp_count <= 3:
+                    print(f"      ✅ Registro WhatsApp ACEITO (Total: {whatsapp_count})")
+            else:
+                if whatsapp_count < 3:
+                    print(f"      ❌ Registro WhatsApp REJEITADO pelo filtro de data")
     
     # Log final dos resultados
     print(f"🔍 DEBUG - Resultados da extração WhatsApp:")
     print(f"   📊 Total de registros WhatsApp encontrados: {whatsapp_count}")
     print(f"   📋 Distribuição por status: {whatsapp_por_status}")
     print(f"   📋 CPFs únicos por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+    print(f"   📋 Total de registros WhatsApp retornados: {len(registros_whatsapp)}")
     
-    # Debug adicional: Mostrar CPFs encontrados
-    for status, cpfs in whatsapp_cpfs_por_status.items():
-        if cpfs:
-            print(f"   📋 CPFs {status} encontrados: {list(cpfs)[:3]}")  # Mostrar primeiros 3 CPFs
+    # Debug adicional: Mostrar distribuição por data se houver filtro
+    if data_ini and data_fim and registros_whatsapp:
+        print(f"🔍 DEBUG - Distribuição por data dos registros WhatsApp:")
+        datas_unicas = set()
+        for reg in registros_whatsapp:
+            if reg['data_encontrada'] != 'N/A':
+                datas_unicas.add(reg['data_encontrada'][:10])  # Apenas a data (DD/MM/YYYY)
+        
+        print(f"   📅 Datas únicas encontradas: {sorted(list(datas_unicas))}")
     
-    print(f"🔍 DEBUG - FUNÇÃO extrair_whatsapp_da_base CONCLUÍDA")
-    return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status
+    return whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status, registros_whatsapp
 
-def extrair_ad_da_base(df, data_ini=None, data_fim=None):
+def extrair_ad_da_base(df, data_ini=None, data_fim=None, apenas_fgts=False):
     """Extrai e conta registros com UTM source = 'ad' da base carregada, separados por status e opcionalmente filtrados por data."""
     print(f"🔍 DEBUG - INICIANDO extrair_ad_da_base")
     print(f"   📊 DataFrame shape: {df.shape if df is not None else 'None'}")
     print(f"   📋 Colunas disponíveis: {list(df.columns) if df is not None else 'None'}")
+    print(f"   🎯 Apenas FGTS: {apenas_fgts}")
     
     ad_count = 0
     ad_por_status = {
@@ -2571,11 +2711,29 @@ def extrair_ad_da_base(df, data_ini=None, data_fim=None):
                             print(f"      ❌ Erro ao parsear data '{data_str}': {e}")
                         continue
                 
-                # Se não há filtro de data ou se a data está no período, conta o registro
+                # Se não há filtro de data ou se a data está no período, processar o registro
                 if not data_ini or not data_fim or data_valida:
+                    # NOVO: Verificar se deve filtrar apenas FGTS
+                    if apenas_fgts:
+                        # Verificar se o registro é de FGTS
+                        eh_fgts = False
+                        for col in colunas_status:
+                            valor_status = row[col] if col in row else None
+                            if valor_status is not None:
+                                valor_status_str = str(valor_status).strip().upper()
+                                if valor_status_str.startswith('FGTS'):
+                                    eh_fgts = True
+                                    break
+                        
+                        # Se não é FGTS e estamos filtrando apenas FGTS, pular
+                        if not eh_fgts:
+                            if ad_count < 3:
+                                print(f"      ❌ Registro AD REJEITADO (não é FGTS)")
+                            continue
+                    
                     ad_count += 1
                     if ad_count <= 3:
-                        print(f"      ✅ Registro AD ACEITO pelo filtro de data (Total: {ad_count})")
+                        print(f"      ✅ Registro AD ACEITO (Total: {ad_count})")
                 else:
                     if ad_count < 3:
                         print(f"      ❌ Registro AD REJEITADO pelo filtro de data")
@@ -3014,6 +3172,7 @@ def main():
         'CLT': set(),
         'Outros': set()
     }
+    registros_ura = []
     
         # VERIFICAÇÃO DE MUDANÇA DE DATAS: Forçar atualização se as datas mudaram
     if "ultima_data_consulta" in st.session_state:
@@ -3078,6 +3237,7 @@ def main():
         'CLT': set(),
         'Outros': set()
     }
+    registros_ura = []
     
     # Inicializar variáveis para contagem de AD
     ad_count = 0
@@ -3125,6 +3285,10 @@ def main():
                 ura_count = 0
             if 'ura_por_status' not in locals() and 'ura_por_status' not in globals():
                 ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+            if 'ura_cpfs_por_status' not in locals() and 'ura_cpfs_por_status' not in globals():
+                ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+            if 'registros_ura' not in locals() and 'registros_ura' not in globals():
+                registros_ura = []
             
             if centro_custo_selecionado == "Novo":
                 total_leads_gerados = ura_por_status.get('Novo', 0)
@@ -3142,6 +3306,10 @@ def main():
             ura_count = 0
         if 'ura_por_status' not in locals() and 'ura_por_status' not in globals():
             ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+        if 'ura_cpfs_por_status' not in locals() and 'ura_cpfs_por_status' not in globals():
+            ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+        if 'registros_ura' not in locals() and 'registros_ura' not in globals():
+            registros_ura = []
         
         if centro_custo_selecionado == "Novo":
             total_leads_gerados = ura_por_status.get('Novo', 0)
@@ -3163,7 +3331,7 @@ def main():
             
             # Extrair contagem de URA da base com filtro de data e separação por status
             print(f"🔍 DEBUG - Iniciando extração URA da base...")
-            ura_count, ura_por_status, ura_cpfs_por_status = extrair_ura_da_base(df_base, data_ini, data_fim)
+            ura_count, ura_por_status, ura_cpfs_por_status, registros_ura = extrair_ura_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
             print(f"🔍 DEBUG - Extração URA concluída:")
             print(f"   📊 Total URA: {ura_count}")
             print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ura_cpfs_por_status.items())}")
@@ -3190,7 +3358,7 @@ def main():
             else:
                 print(f"   ❌ DataFrame está vazio ou None")
             
-            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
             print(f"🔍 DEBUG - Extração AD concluída:")
             print(f"   📊 Total AD: {ad_count}")
             print(f"   📋 CPFs por status: {dict((k, len(v)) for k, v in ad_cpfs_por_status.items())}")
@@ -3198,8 +3366,8 @@ def main():
 
                 
             # Processar dados do WhatsApp silenciosamente
-            whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
-            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+            whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status, registros_whatsapp = extrair_whatsapp_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
+            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
             
             print(f"🔍 DEBUG - Dados WhatsApp extraídos:")
             print(f"   📊 Total registros WhatsApp: {whatsapp_count}")
@@ -3212,6 +3380,7 @@ def main():
             ura_count = 0
             ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
             ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+            registros_ura = []
             # Dados zerados
             pass
     else:
@@ -3219,6 +3388,7 @@ def main():
         ura_count = 0
         ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
         ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+        registros_ura = []
 
     # LIMPEZA DO CACHE: Forçar atualização dos dados do Kolmeya
     print(f"🔄 LIMPANDO CACHE - Forçando atualização dos dados do Kolmeya")
@@ -3536,35 +3706,45 @@ def main():
     # Dados do PAINEL WHATSAPP baseados nos dados reais da base
     if uploaded_file is not None and df_base is not None:
         try:
-            whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status = extrair_whatsapp_da_base(df_base, data_ini, data_fim)
-            
-            print(f"🔍 DEBUG - Painel WhatsApp - Dados extraídos:")
-            print(f"   📊 WhatsApp count: {whatsapp_count}")
-            print(f"   📋 CPFs WhatsApp por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
-            print(f"   🔍 Dados WhatsApp processados")
-            
-            # Usar dados reais do WhatsApp
-            campanhas_realizadas = whatsapp_count  # Total de mensagens WhatsApp
-            camp_atendidas = (whatsapp_count / max(telefones_base, 1)) * 100 if telefones_base > 0 else 0.0  # Taxa de engajamento
-            total_investimento_novo = whatsapp_count * 0.20  # Custo por mensagem WhatsApp
-            tempo_medio_campanha = 2.5  # Tempo médio de resposta em horas
-            total_engajados = whatsapp_count  # Total de mensagens enviadas
-            
-            # Usar estimativas
-            total_vendas_novo = whatsapp_count * 0.15  # Estimativa de vendas (15% de conversão)
-            producao_novo = total_vendas_novo * 5000  # Produção estimada (ticket médio R$ 5.000)
-            
-            roi_novo = producao_novo - total_investimento_novo
-            
-            # Debug: Mostrar valores encontrados
-            print(f"🔍 DEBUG - Painel WhatsApp - Valores encontrados:")
-            print(f"   📊 Campanhas realizadas: {campanhas_realizadas}")
-            print(f"   💰 Produção estimada: R$ {producao_novo:,.2f}")
-            print(f"   📈 Total vendas estimado: {total_vendas_novo}")
-            print(f"   💰 ROI calculado: R$ {roi_novo:,.2f}")
+                whatsapp_count, whatsapp_por_status, whatsapp_cpfs_por_status, registros_whatsapp = extrair_whatsapp_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
+                
+                print(f"🔍 DEBUG - Painel WhatsApp - Dados extraídos:")
+                print(f"   📊 WhatsApp count: {whatsapp_count}")
+                print(f"   📋 CPFs WhatsApp por status: {dict((k, len(v)) for k, v in whatsapp_cpfs_por_status.items())}")
+                print(f"   🔍 Dados WhatsApp processados")
+                
+                # Usar dados reais do WhatsApp (apenas FGTS)
+                campanhas_realizadas = whatsapp_count  # Total de mensagens WhatsApp FGTS
+                camp_atendidas = (whatsapp_count / max(telefones_base, 1)) * 100 if telefones_base > 0 else 0.0  # Taxa de engajamento
+                total_investimento_novo = whatsapp_count * 0.20  # Custo por mensagem WhatsApp
+                tempo_medio_campanha = 2.5  # Tempo médio de resposta em horas
+                total_engajados = whatsapp_count  # Total de mensagens enviadas
+                
+                # Usar estimativas
+                total_vendas_novo = whatsapp_count * 0.15  # Estimativa de vendas (15% de conversão)
+                producao_novo = total_vendas_novo * 5000  # Produção estimada (ticket médio R$ 5.000)
+                
+                roi_novo = producao_novo - total_investimento_novo
+                
+                # Debug: Mostrar valores encontrados
+                print(f"🔍 DEBUG - Painel WhatsApp - Valores encontrados:")
+                print(f"   📊 Campanhas realizadas: {campanhas_realizadas}")
+                print(f"   💰 Produção estimada: R$ {producao_novo:,.2f}")
+                print(f"   📈 Total vendas estimado: {total_vendas_novo}")
+                print(f"   💰 ROI calculado: R$ {roi_novo:,.2f}")
         except Exception as e:
-            print(f"Erro ao processar dados do WhatsApp: {e}")
-            # Fallback para valores padrão
+                print(f"Erro ao processar dados do WhatsApp: {e}")
+                # Fallback para valores padrão
+                campanhas_realizadas = 0
+                camp_atendidas = 0.0
+                total_investimento_novo = 0.0
+                tempo_medio_campanha = 0.0
+                total_engajados = 0
+                total_vendas_novo = 0
+                producao_novo = 0.0
+                roi_novo = 0.0
+        else:
+            # Se não há arquivo carregado, usar valores padrão
             campanhas_realizadas = 0
             camp_atendidas = 0.0
             total_investimento_novo = 0.0
@@ -3573,21 +3753,11 @@ def main():
             total_vendas_novo = 0
             producao_novo = 0.0
             roi_novo = 0.0
-    else:
-        # Se não há arquivo carregado, usar valores padrão
-        campanhas_realizadas = 0
-        camp_atendidas = 0.0
-        total_investimento_novo = 0.0
-        tempo_medio_campanha = 0.0
-        total_engajados = 0
-        total_vendas_novo = 0
-        producao_novo = 0.0
-        roi_novo = 0.0
 
     # Dados do TERCEIRO PAINEL baseados nos dados reais da base
     if uploaded_file is not None and df_base is not None:
         try:
-            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim)
+            ad_count, ad_por_status, ad_cpfs_por_status = extrair_ad_da_base(df_base, data_ini, data_fim, apenas_fgts=True)
             
             # Usar dados reais do AD
             acoes_realizadas = ad_count  # Total de ações AD
@@ -3831,26 +4001,30 @@ def main():
 
         <!-- PAINEL 4NET -->
         <div class="panel">
-            <div class="panel-title">4NET</div>
+            <div class="panel-title">
+                4NET
+                <div style="font-size: 10px; color: #4CAF50; margin-top: 5px;">🎯 Apenas FGTS</div>
+                {f'<div style="font-size: 10px; color: #4CAF50; margin-top: 2px;">📅 Filtrado por data</div>' if data_ini and data_fim else ''}
+            </div>
             {f"""
-                            <div class="metric-row">
+                <div class="metric-row">
                     <div class="metric-item">
                         <div class="metric-label">Ligações</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value">{ura_count}</div>
                     </div>
                     <div class="metric-item">
                         <div class="metric-label">Atendidas</div>
-                        <div class="metric-value">0</div>
+                        <div class="metric-value">{ura_count}</div>
                     </div>
                 </div>
                 <div class="metric-row">
                     <div class="metric-item">
                         <div class="metric-label">Investimento</div>
-                        <div class="metric-value-small">0,00</div>
+                        <div class="metric-value-small">{formatar_real(ura_count * 0.15)}</div>
                     </div>
                     <div class="metric-item">
                         <div class="metric-label">Taxa Ativação</div>
-                        <div class="metric-value-small">0.0%</div>
+                        <div class="metric-value-small">100.0%</div>
                     </div>
                 </div>
             <div class="details-section">
@@ -3861,7 +4035,7 @@ def main():
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">Leads Gerados</div>
-                        <div class="detail-value">{telefones_base_ura:,}</div>
+                        <div class="detail-value">{ura_count:,}</div>
                     </div>
                     <div class="detail-item">
                         <div class="detail-label">ticket medio</div>
@@ -3894,28 +4068,34 @@ def main():
             """}
         </div>
 
+
+
         <!-- PAINEL WHATSAPP -->
         <div class="panel">
-            <div class="panel-title">PAINEL WHATSAPP</div>
+            <div class="panel-title">
+                PAINEL WHATSAPP
+                <div style="font-size: 10px; color: #4CAF50; margin-top: 5px;">🎯 Apenas FGTS</div>
+                {f'<div style="font-size: 10px; color: #4CAF50; margin-top: 2px;">📅 Filtrado por data</div>' if data_ini and data_fim else ''}
+            </div>
             {f"""
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Mensagens enviadas</div>
-                    <div class="metric-value">0</div>
+                    <div class="metric-value">{campanhas_realizadas}</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-label">Interações</div>
-                    <div class="metric-value">0.0%</div>
+                    <div class="metric-value">{camp_atendidas:.1f}%</div>
                 </div>
             </div>
             <div class="metric-row">
                 <div class="metric-item">
                     <div class="metric-label">Investimento</div>
-                    <div class="metric-value-small">0,00</div>
+                    <div class="metric-value-small">{formatar_real(total_investimento_novo)}</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-label">Tempo Médio</div>
-                    <div class="metric-value-small">00:00h</div>
+                    <div class="metric-value-small">{tempo_medio_campanha:.1f}h</div>
                 </div>
             </div>
             <div class="details-section">
@@ -3961,7 +4141,11 @@ def main():
 
         <!-- PAINEL AD -->
         <div class="panel">
-            <div class="panel-title">PAINEL AD</div>
+            <div class="panel-title">
+                PAINEL AD
+                <div style="font-size: 10px; color: #4CAF50; margin-top: 5px;">🎯 Apenas FGTS</div>
+                {f'<div style="font-size: 10px; color: #4CAF50; margin-top: 2px;">📅 Filtrado por data</div>' if data_ini and data_fim else ''}
+            </div>
             {f"""
             <div class="metric-row">
                 <div class="metric-item">
@@ -4025,6 +4209,179 @@ def main():
         </div>
     </div>
     """
+    
+    # Seção de consulta automática ao FACTA usando CPFs encontrados nos painéis
+    st.markdown("---")
+    
+    # Coletar todos os CPFs FGTS encontrados nos painéis
+    cpfs_fgts_todos = set()
+    
+    if uploaded_file is not None and df_base is not None:
+        # CPFs do painel 4NET (URA)
+        if 'ura_cpfs_por_status' in locals() and 'FGTS' in ura_cpfs_por_status:
+            cpfs_fgts_todos.update(ura_cpfs_por_status['FGTS'])
+            print(f"🔍 CPFs FGTS do painel 4NET: {len(ura_cpfs_por_status['FGTS'])}")
+        
+        # CPFs do painel WhatsApp
+        if 'whatsapp_cpfs_por_status' in locals() and 'FGTS' in whatsapp_cpfs_por_status:
+            cpfs_fgts_todos.update(whatsapp_cpfs_por_status['FGTS'])
+            print(f"🔍 CPFs FGTS do painel WhatsApp: {len(whatsapp_cpfs_por_status['FGTS'])}")
+        
+        # CPFs do painel AD
+        if 'ad_cpfs_por_status' in locals() and 'FGTS' in ad_cpfs_por_status:
+            cpfs_fgts_todos.update(ad_cpfs_por_status['FGTS'])
+            print(f"🔍 CPFs FGTS do painel AD: {len(ad_cpfs_por_status['FGTS'])}")
+        
+        print(f"🔍 Total de CPFs FGTS únicos encontrados: {len(cpfs_fgts_todos)}")
+        
+        # Consultar FACTA com os CPFs encontrados
+        if cpfs_fgts_todos:
+            st.subheader("🔍 Consulta Automática ao FACTA")
+            
+            # Mostrar estatísticas dos CPFs encontrados
+            col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
+            
+            with col_stats1:
+                st.metric("Total CPFs FGTS", len(cpfs_fgts_todos))
+            
+            with col_stats2:
+                cpfs_4net = len(ura_cpfs_por_status.get('FGTS', set())) if 'ura_cpfs_por_status' in locals() else 0
+                st.metric("Painel 4NET", cpfs_4net)
+            
+            with col_stats3:
+                cpfs_whatsapp = len(whatsapp_cpfs_por_status.get('FGTS', set())) if 'whatsapp_cpfs_por_status' in locals() else 0
+                st.metric("Painel WhatsApp", cpfs_whatsapp)
+            
+            with col_stats4:
+                cpfs_ad = len(ad_cpfs_por_status.get('FGTS', set())) if 'ad_cpfs_por_status' in locals() else 0
+                st.metric("Painel AD", cpfs_ad)
+            
+            # Mostrar alguns CPFs como exemplo
+            with st.expander("📋 Ver CPFs Encontrados"):
+                cpfs_list = list(cpfs_fgts_todos)[:10]  # Primeiros 10 CPFs
+                st.write("**Primeiros 10 CPFs FGTS encontrados:**")
+                for i, cpf in enumerate(cpfs_list, 1):
+                    st.write(f"{i}. {cpf}")
+                
+                if len(cpfs_fgts_todos) > 10:
+                    st.info(f"Mostrando os primeiros 10 de {len(cpfs_fgts_todos)} CPFs únicos")
+            
+            st.write(f"**CPFs FGTS encontrados:** {len(cpfs_fgts_todos)}")
+            
+            # Configurações da consulta FACTA
+            col_facta1, col_facta2 = st.columns(2)
+            
+            with col_facta1:
+                ambiente_facta = st.selectbox(
+                    "Ambiente FACTA",
+                    ["homologacao", "producao"],
+                    index=0,
+                    help="Selecione o ambiente do FACTA para consulta"
+                )
+            
+            with col_facta2:
+                # Botão para exportar CPFs
+                if st.button("📥 Exportar CPFs", help="Exportar CPFs FGTS para CSV"):
+                    if cpfs_fgts_todos:
+                        # Criar DataFrame para exportação
+                        import pandas as pd
+                        df_cpfs = pd.DataFrame({
+                            'CPF': list(cpfs_fgts_todos),
+                            'Status': 'FGTS',
+                            'Data_Consulta': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                        })
+                        
+                        # Converter para CSV
+                        csv = df_cpfs.to_csv(index=False)
+                        st.download_button(
+                            label="💾 Download CSV",
+                            data=csv,
+                            file_name=f"cpfs_fgts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv"
+                        )
+                
+                # Botão para consultar FACTA
+                if st.button("🔍 Consultar FACTA", type="primary"):
+                    # Criar container para mostrar progresso
+                    progress_container = st.container()
+                    
+                    with progress_container:
+                        st.info("🔄 Iniciando consulta ao FACTA...")
+                        
+                        # Barra de progresso
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        try:
+                            # Atualizar status
+                            status_text.text("🔍 Consultando propostas no FACTA...")
+                            progress_bar.progress(25)
+                            
+                            # Consultar propostas no FACTA
+                            propostas_facta = consultar_andamento_propostas_facta(
+                                cpfs=list(cpfs_fgts_todos),
+                                ambiente=ambiente_facta
+                            )
+                            
+                            progress_bar.progress(75)
+                            status_text.text("✅ Consulta concluída! Processando resultados...")
+                            
+                            progress_bar.progress(100)
+                            status_text.text("✅ Processamento concluído!")
+                            
+                            if propostas_facta:
+                                st.success(f"✅ {len(propostas_facta)} propostas encontradas no FACTA")
+                                
+                                # Mostrar resumo das propostas
+                                st.subheader("📊 Resumo das Propostas FACTA")
+                                
+                                # Estatísticas gerais
+                                col_geral1, col_geral2, col_geral3 = st.columns(3)
+                                
+                                with col_geral1:
+                                    st.metric("Total Propostas", len(propostas_facta))
+                                
+                                with col_geral2:
+                                    cpfs_com_proposta = len(set([p.get('cpf', '') for p in propostas_facta if p.get('cpf')]))
+                                    st.metric("CPFs com Proposta", cpfs_com_proposta)
+                                
+                                with col_geral3:
+                                    taxa_cobertura = (cpfs_com_proposta / len(cpfs_fgts_todos)) * 100 if cpfs_fgts_todos else 0
+                                    st.metric("Taxa Cobertura", f"{taxa_cobertura:.1f}%")
+                                
+                                # Contar por status
+                                status_counts = {}
+                                for proposta in propostas_facta:
+                                    status = proposta.get('status', 'N/A')
+                                    status_counts[status] = status_counts.get(status, 0) + 1
+                                
+                                # Mostrar contagem por status em colunas dinâmicas
+                                if status_counts:
+                                    st.write("**Distribuição por Status:**")
+                                    num_cols = min(4, len(status_counts))
+                                    cols_status = st.columns(num_cols)
+                                    
+                                    for i, (status, count) in enumerate(status_counts.items()):
+                                        with cols_status[i % num_cols]:
+                                            st.metric(f"Status: {status}", count)
+                                
+                                # Mostrar detalhes das propostas
+                                with st.expander("📋 Ver Detalhes das Propostas"):
+                                    for i, proposta in enumerate(propostas_facta[:20]):  # Mostrar apenas as primeiras 20
+                                        st.write(f"**Proposta {i+1}:**")
+                                        st.json(proposta)
+                                    
+                                    if len(propostas_facta) > 20:
+                                        st.info(f"Mostrando as primeiras 20 de {len(propostas_facta)} propostas")
+                                
+                            else:
+                                st.warning("⚠️ Nenhuma proposta encontrada no FACTA para os CPFs fornecidos")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Erro ao consultar FACTA: {str(e)}")
+                            st.exception(e)
+        else:
+            st.info("ℹ️ Nenhum CPF FGTS encontrado para consulta no FACTA")
     
     # Seção de comparação automática de CPFs com base e pesquisa no FACTA (ANTES da renderização do painel)
     st.markdown("---")
@@ -4290,6 +4647,8 @@ def main():
         # Inicializar variáveis URA com valores padrão
         ura_count = 0
         ura_por_status = {'Novo': 0, 'FGTS': 0, 'CLT': 0, 'Outros': 0}
+        ura_cpfs_por_status = {'Novo': set(), 'FGTS': set(), 'CLT': set(), 'Outros': set()}
+        registros_ura = []
         
         if centro_custo_selecionado == "Novo":
             total_leads_gerados = ura_por_status.get('Novo', 0)
