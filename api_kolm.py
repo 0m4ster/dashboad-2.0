@@ -804,6 +804,8 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
             if tenant_segment_id and messages:
                 messages_filtradas = []
                 
+                print(f"🔍 DEBUG - Aplicando filtro por centro de custo: {tenant_segment_id}")
+                
                 for msg in messages:
                     if isinstance(msg, dict):
                         # Tentar diferentes campos que podem conter o centro de custo
@@ -826,18 +828,45 @@ def consultar_status_sms_kolmeya(start_at, end_at, limit=30000, token=None, tena
                         
                         # Se encontrou algum campo, verificar se corresponde ao filtro
                         if centro_custo_msg:
-                            # Mapear IDs para nomes se necessário
+                            # CORREÇÃO: Mapeamento mais abrangente de centros de custo
                             mapeamento_centros = {
-                                8105: ["Novo", "8105", "NOVO", "novo", "INSS", "inss", "Inss", 8105],
-                                8103: ["FGTS", "8103", "fgts", "Fgts", "Fgts", "Fgts", 8103], 
-                                8208: ["Crédito CLT", "8208", "CLT", "clt", "Crédito", "CREDITO", "credito", "CLT", "clt", 8208]
+                                # FGTS
+                                8103: ["FGTS", "8103", "fgts", "Fgts", "FGTS", "fgts", "Fgts", 8103, "FGTS", "fgts"],
+                                "FGTS": ["FGTS", "8103", "fgts", "Fgts", "FGTS", "fgts", "Fgts", 8103, "FGTS", "fgts"],
+                                "fgts": ["FGTS", "8103", "fgts", "Fgts", "FGTS", "fgts", "Fgts", 8103, "FGTS", "fgts"],
+                                
+                                # Novo/INSS
+                                8105: ["Novo", "8105", "NOVO", "novo", "INSS", "inss", "Inss", 8105, "Novo", "novo"],
+                                "Novo": ["Novo", "8105", "NOVO", "novo", "INSS", "inss", "Inss", 8105, "Novo", "novo"],
+                                "novo": ["Novo", "8105", "NOVO", "novo", "INSS", "inss", "Inss", 8105, "Novo", "novo"],
+                                
+                                # CLT
+                                8208: ["Crédito CLT", "8208", "CLT", "clt", "Crédito", "CREDITO", "credito", "CLT", "clt", 8208],
+                                "CLT": ["Crédito CLT", "8208", "CLT", "clt", "Crédito", "CREDITO", "credito", "CLT", "clt", 8208],
+                                "clt": ["Crédito CLT", "8208", "CLT", "clt", "Crédito", "CREDITO", "credito", "CLT", "clt", 8208]
                             }
                             
+                            # Obter valores aceitos para o centro de custo
                             valores_aceitos = mapeamento_centros.get(tenant_segment_id, [tenant_segment_id])
+                            
+                            # Debug para os primeiros registros
+                            if len(messages_filtradas) < 3:
+                                print(f"   🔍 DEBUG - Mensagem centro_custo: '{centro_custo_msg}' vs filtro: '{tenant_segment_id}'")
+                                print(f"   🔍 DEBUG - Valores aceitos: {valores_aceitos}")
                             
                             # Verificar se o valor encontrado corresponde ao filtro
                             if centro_custo_msg in valores_aceitos:
                                 messages_filtradas.append(msg)
+                                if len(messages_filtradas) <= 3:
+                                    print(f"   ✅ Mensagem aceita pelo filtro: centro_custo='{centro_custo_msg}'")
+                            else:
+                                if len(messages_filtradas) < 3:
+                                    print(f"   ❌ Mensagem rejeitada pelo filtro: centro_custo='{centro_custo_msg}'")
+                        else:
+                            # Se não encontrou centro de custo, incluir a mensagem (não filtrar)
+                            messages_filtradas.append(msg)
+                            if len(messages_filtradas) <= 3:
+                                print(f"   ⚠️ Mensagem sem centro de custo incluída (sem filtro)")
                 
                 print(f"🔍 DEBUG - Após filtro por centro de custo '{tenant_segment_id}': {len(messages_filtradas)} mensagens")
                 return messages_filtradas
@@ -5156,3 +5185,335 @@ def testar_cpfs_especificos():
     
     return resultados
 
+def testar_cpf_especifico(cpf_teste="07814821436"):
+    """
+    Função para testar especificamente o CPF 07814821436 que não está sendo encontrado.
+    
+    Args:
+        cpf_teste: CPF para testar (padrão: 07814821436)
+    
+    Returns:
+        Resultados detalhados do teste
+    """
+    print(f"🔍 TESTE ESPECÍFICO - CPF: {cpf_teste}")
+    print(f"=" * 60)
+    
+    # 1. TESTAR LIMPEZA DO CPF
+    print(f"\n📋 1. Testando limpeza do CPF...")
+    cpf_limpo = limpar_cpf(cpf_teste)
+    print(f"   CPF original: '{cpf_teste}'")
+    print(f"   CPF limpo: '{cpf_limpo}'")
+    print(f"   Comprimento: {len(cpf_limpo) if cpf_limpo else 0}")
+    print(f"   Validação: {'✅ Válido' if cpf_limpo and validar_cpf(cpf_limpo) else '❌ Inválido'}")
+    
+    # 2. TESTAR CONSULTA NO KOLMEYA
+    print(f"\n📱 2. Testando consulta no Kolmeya...")
+    
+    # Obter token
+    token_kolmeya = get_kolmeya_token()
+    if not token_kolmeya:
+        print("   ❌ Token do Kolmeya não encontrado")
+        return {"erro": "Token não encontrado"}
+    
+    # Consultar últimos 30 dias para encontrar o CPF
+    from datetime import datetime, timedelta
+    data_fim = datetime.now().date()
+    data_ini = data_fim - timedelta(days=30)
+    
+    start_at = data_ini.strftime('%Y-%m-%d 00:00')
+    end_at = data_fim.strftime('%Y-%m-%d 23:59')
+    
+    print(f"   📅 Período de consulta: {start_at} a {end_at}")
+    
+    # Consultar CPFs do Kolmeya
+    cpfs_kolmeya = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=30000,
+        token=token_kolmeya,
+        tenant_segment_id=None  # Sem filtro de centro de custo
+    )
+    
+    cpfs_kolmeya_set = set(cpfs_kolmeya)
+    print(f"   📊 Total CPFs encontrados no Kolmeya: {len(cpfs_kolmeya_set)}")
+    
+    # Verificar se o CPF está no Kolmeya
+    cpf_encontrado_kolmeya = cpf_limpo in cpfs_kolmeya_set
+    print(f"   🔍 CPF {cpf_limpo} encontrado no Kolmeya: {'✅ SIM' if cpf_encontrado_kolmeya else '❌ NÃO'}")
+    
+    # 3. TESTAR CONSULTA NO FACTA
+    print(f"\n📋 3. Testando consulta no FACTA...")
+    
+    token_facta = get_facta_token()
+    if not token_facta:
+        print("   ❌ Token do FACTA não encontrado")
+    else:
+        # Consultar propostas do FACTA
+        propostas_facta = consultar_andamento_propostas_facta(
+            cpfs={cpf_limpo},
+            token=token_facta,
+            ambiente="homologacao"
+        )
+        
+        print(f"   📊 Propostas encontradas no FACTA: {len(propostas_facta)}")
+        
+        if propostas_facta:
+            print(f"   📋 Detalhes da proposta:")
+            for proposta in propostas_facta:
+                print(f"      Cliente: {proposta.get('cliente', 'N/A')}")
+                print(f"      CPF: {proposta.get('cpf', 'N/A')}")
+                print(f"      Valor AF: R$ {proposta.get('valor_af', 0):.2f}")
+                print(f"      Status: {proposta.get('status_proposta', 'N/A')}")
+                print(f"      Averbador: {proposta.get('averbador', 'N/A')}")
+        else:
+            print(f"   ❌ Nenhuma proposta encontrada para o CPF {cpf_limpo}")
+    
+    # 4. TESTAR COMPARAÇÃO
+    print(f"\n🔍 4. Testando comparação...")
+    
+    # Simular base com apenas este CPF
+    cpfs_base_simulada = {cpf_limpo}
+    
+    # Comparar
+    resultado = comparar_cpfs(cpfs_base_simulada, cpfs_kolmeya_set)
+    
+    print(f"   📊 Resultados da comparação:")
+    print(f"      CPFs na base: {resultado['total_base']}")
+    print(f"      CPFs no Kolmeya: {resultado['total_kolmeya']}")
+    print(f"      CPFs coincidentes: {resultado['total_enviados']}")
+    print(f"      CPFs apenas na base: {resultado['total_nao_enviados']}")
+    print(f"      CPFs apenas no Kolmeya: {resultado['total_extra']}")
+    
+    # 5. VERIFICAR CENTROS DE CUSTO
+    print(f"\n🏢 5. Verificando centros de custo...")
+    
+    # Consultar mensagens do Kolmeya para ver centros de custo
+    messages = consultar_status_sms_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=1000,
+        token=token_kolmeya,
+        tenant_segment_id=None
+    )
+    
+    if messages:
+        centros_custo = set()
+        cpfs_centros = {}
+        
+        for msg in messages:
+            if isinstance(msg, dict):
+                cpf_msg = msg.get('cpf')
+                centro_custo = msg.get('centro_custo', 'N/A')
+                
+                if cpf_msg:
+                    cpf_msg_limpo = limpar_cpf(str(cpf_msg))
+                    if cpf_msg_limpo == cpf_limpo:
+                        print(f"   ✅ CPF {cpf_limpo} encontrado em mensagem!")
+                        print(f"      Centro de custo: {centro_custo}")
+                        print(f"      Telefone: {msg.get('telefone', 'N/A')}")
+                        print(f"      Data: {msg.get('enviada_em', 'N/A')}")
+                        print(f"      Status: {msg.get('status', 'N/A')}")
+                
+                centros_custo.add(centro_custo)
+                if cpf_msg:
+                    cpf_msg_limpo = limpar_cpf(str(cpf_msg))
+                    if cpf_msg_limpo not in cpfs_centros:
+                        cpfs_centros[cpf_msg_limpo] = centro_custo
+        
+        print(f"   📊 Centros de custo encontrados: {centros_custo}")
+        print(f"   📊 CPFs por centro de custo: {len(cpfs_centros)}")
+        
+        # Verificar se o CPF está em algum centro específico
+        if cpf_limpo in cpfs_centros:
+            print(f"   ✅ CPF {cpf_limpo} está no centro: {cpfs_centros[cpf_limpo]}")
+        else:
+            print(f"   ❌ CPF {cpf_limpo} não encontrado em nenhum centro de custo")
+    
+    # 6. RESUMO FINAL
+    print(f"\n📊 RESUMO FINAL:")
+    print(f"   CPF testado: {cpf_teste}")
+    print(f"   CPF limpo: {cpf_limpo}")
+    print(f"   No Kolmeya: {'✅ SIM' if cpf_encontrado_kolmeya else '❌ NÃO'}")
+    print(f"   No FACTA: {'✅ SIM' if propostas_facta else '❌ NÃO'}")
+    
+    return {
+        "cpf_original": cpf_teste,
+        "cpf_limpo": cpf_limpo,
+        "no_kolmeya": cpf_encontrado_kolmeya,
+        "no_facta": bool(propostas_facta),
+        "propostas_facta": propostas_facta,
+        "total_kolmeya": len(cpfs_kolmeya_set)
+    }
+
+def testar_cpf_wilton_completo():
+    """
+    Função específica para testar o CPF 07814821436 (Wilton Bento) em todos os cenários possíveis.
+    """
+    print(f"🔍 TESTE COMPLETO - CPF WILTON BENTO (07814821436)")
+    print(f"=" * 70)
+    
+    cpf_wilton = "07814821436"
+    
+    # 1. Testar limpeza do CPF
+    print(f"\n📋 1. Testando limpeza do CPF...")
+    cpf_limpo = limpar_cpf(cpf_wilton)
+    print(f"   CPF original: {cpf_wilton}")
+    print(f"   CPF limpo: {cpf_limpo}")
+    print(f"   Válido: {'✅ SIM' if validar_cpf(cpf_limpo) else '❌ NÃO'}")
+    
+    # 2. Testar consulta no Kolmeya sem filtros
+    print(f"\n📱 2. Testando consulta no Kolmeya (SEM filtros)...")
+    
+    token_kolmeya = get_kolmeya_token()
+    if not token_kolmeya:
+        print("   ❌ Token do Kolmeya não encontrado")
+        return
+    
+    # Consultar últimos 60 dias para ter mais chances de encontrar
+    from datetime import datetime, timedelta
+    data_fim = datetime.now().date()
+    data_ini = data_fim - timedelta(days=60)
+    
+    start_at = data_ini.strftime('%Y-%m-%d 00:00')
+    end_at = data_fim.strftime('%Y-%m-%d 23:59')
+    
+    print(f"   📅 Período: {start_at} a {end_at}")
+    
+    # Consultar sem filtro de centro de custo
+    cpfs_kolmeya_sem_filtro = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=30000,
+        token=token_kolmeya,
+        tenant_segment_id=None
+    )
+    
+    cpfs_kolmeya_set_sem_filtro = set(cpfs_kolmeya_sem_filtro)
+    print(f"   📊 CPFs encontrados (sem filtro): {len(cpfs_kolmeya_set_sem_filtro)}")
+    print(f"   🔍 CPF Wilton encontrado (sem filtro): {'✅ SIM' if cpf_limpo in cpfs_kolmeya_set_sem_filtro else '❌ NÃO'}")
+    
+    # 3. Testar consulta no Kolmeya com filtro FGTS
+    print(f"\n📱 3. Testando consulta no Kolmeya (COM filtro FGTS)...")
+    
+    cpfs_kolmeya_com_filtro = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=30000,
+        token=token_kolmeya,
+        tenant_segment_id="FGTS"  # Filtro FGTS
+    )
+    
+    cpfs_kolmeya_set_com_filtro = set(cpfs_kolmeya_com_filtro)
+    print(f"   📊 CPFs encontrados (com filtro FGTS): {len(cpfs_kolmeya_set_com_filtro)}")
+    print(f"   🔍 CPF Wilton encontrado (com filtro FGTS): {'✅ SIM' if cpf_limpo in cpfs_kolmeya_set_com_filtro else '❌ NÃO'}")
+    
+    # 4. Testar consulta no Kolmeya com filtro 8103 (ID do FGTS)
+    print(f"\n📱 4. Testando consulta no Kolmeya (COM filtro 8103)...")
+    
+    cpfs_kolmeya_com_filtro_id = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=30000,
+        token=token_kolmeya,
+        tenant_segment_id=8103  # ID do FGTS
+    )
+    
+    cpfs_kolmeya_set_com_filtro_id = set(cpfs_kolmeya_com_filtro_id)
+    print(f"   📊 CPFs encontrados (com filtro 8103): {len(cpfs_kolmeya_set_com_filtro_id)}")
+    print(f"   🔍 CPF Wilton encontrado (com filtro 8103): {'✅ SIM' if cpf_limpo in cpfs_kolmeya_set_com_filtro_id else '❌ NÃO'}")
+    
+    # 5. Verificar mensagens detalhadas
+    print(f"\n📱 5. Verificando mensagens detalhadas...")
+    
+    messages = consultar_status_sms_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=1000,
+        token=token_kolmeya,
+        tenant_segment_id=None
+    )
+    
+    if messages:
+        mensagens_wilton = []
+        centros_custo_encontrados = set()
+        
+        for msg in messages:
+            if isinstance(msg, dict):
+                cpf_msg = msg.get('cpf')
+                if cpf_msg:
+                    cpf_msg_limpo = limpar_cpf(str(cpf_msg))
+                    if cpf_msg_limpo == cpf_limpo:
+                        mensagens_wilton.append(msg)
+                        centro_custo = msg.get('centro_custo', 'N/A')
+                        centros_custo_encontrados.add(centro_custo)
+        
+        print(f"   📊 Mensagens encontradas para Wilton: {len(mensagens_wilton)}")
+        print(f"   🏢 Centros de custo encontrados: {centros_custo_encontrados}")
+        
+        if mensagens_wilton:
+            print(f"   📋 Detalhes das mensagens:")
+            for i, msg in enumerate(mensagens_wilton[:3]):  # Mostrar apenas as 3 primeiras
+                print(f"      Mensagem {i+1}:")
+                print(f"         CPF: {msg.get('cpf', 'N/A')}")
+                print(f"         Centro de custo: {msg.get('centro_custo', 'N/A')}")
+                print(f"         Telefone: {msg.get('telefone', 'N/A')}")
+                print(f"         Data: {msg.get('enviada_em', 'N/A')}")
+                print(f"         Status: {msg.get('status', 'N/A')}")
+                print(f"         Nome: {msg.get('nome', 'N/A')}")
+    
+    # 6. Testar consulta no FACTA
+    print(f"\n📋 6. Testando consulta no FACTA...")
+    
+    token_facta = get_facta_token()
+    if token_facta:
+        propostas_facta = consultar_andamento_propostas_facta(
+            cpfs={cpf_limpo},
+            token=token_facta,
+            ambiente="homologacao"
+        )
+        
+        print(f"   📊 Propostas encontradas no FACTA: {len(propostas_facta)}")
+        
+        if propostas_facta:
+            print(f"   📋 Detalhes da proposta:")
+            for proposta in propostas_facta:
+                print(f"      Cliente: {proposta.get('cliente', 'N/A')}")
+                print(f"      CPF: {proposta.get('cpf', 'N/A')}")
+                print(f"      Valor AF: R$ {proposta.get('valor_af', 0):.2f}")
+                print(f"      Status: {proposta.get('status_proposta', 'N/A')}")
+                print(f"      Averbador: {proposta.get('averbador', 'N/A')}")
+                print(f"      Data: {proposta.get('data_movimento', 'N/A')}")
+    else:
+        print("   ❌ Token do FACTA não encontrado")
+    
+    # 7. Resumo final
+    print(f"\n📊 RESUMO FINAL:")
+    print(f"   CPF Wilton: {cpf_wilton}")
+    print(f"   CPF limpo: {cpf_limpo}")
+    print(f"   No Kolmeya (sem filtro): {'✅ SIM' if cpf_limpo in cpfs_kolmeya_set_sem_filtro else '❌ NÃO'}")
+    print(f"   No Kolmeya (filtro FGTS): {'✅ SIM' if cpf_limpo in cpfs_kolmeya_set_com_filtro else '❌ NÃO'}")
+    print(f"   No Kolmeya (filtro 8103): {'✅ SIM' if cpf_limpo in cpfs_kolmeya_set_com_filtro_id else '❌ NÃO'}")
+    print(f"   No FACTA: {'✅ SIM' if token_facta and propostas_facta else '❌ NÃO'}")
+    
+    # 8. Análise do problema
+    print(f"\n🔍 ANÁLISE DO PROBLEMA:")
+    
+    if cpf_limpo in cpfs_kolmeya_set_sem_filtro:
+        if cpf_limpo not in cpfs_kolmeya_set_com_filtro:
+            print(f"   ❌ PROBLEMA IDENTIFICADO: CPF está no Kolmeya mas não passa no filtro FGTS")
+            print(f"   💡 SOLUÇÃO: Verificar se o centro de custo está correto ou ajustar o filtro")
+        else:
+            print(f"   ✅ CPF encontrado corretamente com filtro FGTS")
+    else:
+        print(f"   ❌ PROBLEMA IDENTIFICADO: CPF não está no Kolmeya no período consultado")
+        print(f"   💡 SOLUÇÃO: Verificar se o período está correto ou se o CPF foi enviado em outra data")
+    
+    return {
+        "cpf": cpf_limpo,
+        "no_kolmeya_sem_filtro": cpf_limpo in cpfs_kolmeya_set_sem_filtro,
+        "no_kolmeya_com_filtro_fgts": cpf_limpo in cpfs_kolmeya_set_com_filtro,
+        "no_kolmeya_com_filtro_8103": cpf_limpo in cpfs_kolmeya_set_com_filtro_id,
+        "no_facta": token_facta and bool(propostas_facta),
+        "mensagens_wilton": len(mensagens_wilton) if 'mensagens_wilton' in locals() else 0,
+        "centros_custo": list(centros_custo_encontrados) if 'centros_custo_encontrados' in locals() else []
+    }
