@@ -150,30 +150,43 @@ def limpar_cpf(cpf):
     # Converter para string
     cpf_str = str(cpf).strip()
     
+    # Debug para CPFs problemáticos
+    debug_info = f"CPF original: '{cpf}' (tipo: {type(cpf)})"
+    
     # Verificar se é notação científica (ex: 1.20225E+17)
     if 'E' in cpf_str.upper() or 'e' in cpf_str:
         try:
             # Converter notação científica para número inteiro
             numero = float(cpf_str)
             cpf_str = str(int(numero))
-        except (ValueError, OverflowError):
+            debug_info += f" -> Notação científica convertida: '{cpf_str}'"
+        except (ValueError, OverflowError) as e:
+            debug_info += f" -> Erro na conversão: {e}"
             return ""
     
     # Remove caracteres não numéricos
     cpf_limpo = re.sub(r'\D', '', cpf_str)
+    debug_info += f" -> Apenas números: '{cpf_limpo}'"
     
     # Se tem exatamente 11 dígitos, retorna como está
     if len(cpf_limpo) == 11:
+        debug_info += f" -> CPF válido (11 dígitos): '{cpf_limpo}'"
         return cpf_limpo
     
     # Se tem menos de 11 dígitos, adiciona zeros à esquerda
     if len(cpf_limpo) < 11:
-        return cpf_limpo.zfill(11)
+        cpf_final = cpf_limpo.zfill(11)
+        debug_info += f" -> CPF com zeros à esquerda: '{cpf_final}'"
+        return cpf_final
     
     # Se tem mais de 11 dígitos, pega os 11 últimos
     if len(cpf_limpo) > 11:
-        return cpf_limpo[-11:]
+        cpf_final = cpf_limpo[-11:]
+        debug_info += f" -> CPF truncado (11 últimos): '{cpf_final}'"
+        return cpf_final
     
+    # Se chegou aqui, algo deu errado
+    debug_info += f" -> CPF inválido (comprimento: {len(cpf_limpo)})"
     return ""
 
 def validar_cpf(cpf):
@@ -392,6 +405,15 @@ def extrair_cpfs_da_base(df, data_ini=None, data_fim=None):
         if any(keyword in col_lower for keyword in ['data', 'date', 'criacao', 'created', 'timestamp']):
             colunas_data.append(col)
     
+    print(f"🔍 DEBUG - Extraindo CPFs da base:")
+    print(f"   📊 DataFrame shape: {df.shape if df is not None else 'None'}")
+    print(f"   📋 Colunas CPF encontradas: {colunas_cpf}")
+    print(f"   📅 Filtro de data: {data_ini} a {data_fim}")
+    
+    cpfs_validos = 0
+    cpfs_invalidos = 0
+    registros_sem_cpf = 0
+    
     for idx, row in df.iterrows():
         # Verifica se está no período de data (se especificado)
         if data_ini and data_fim and colunas_data:
@@ -430,15 +452,56 @@ def extrair_cpfs_da_base(df, data_ini=None, data_fim=None):
                 continue
         
         # Extrai CPFs das colunas
+        cpf_encontrado = False
         for col in colunas_cpf:
             valor = row[col] if col in row else None
             if valor is not None:
                 valor_str = str(valor).strip()
                 
-                # Usar a nova função de limpeza de CPF
-                cpf_limpo = limpar_cpf(valor_str)
-                if cpf_limpo and len(cpf_limpo) == 11 and validar_cpf(cpf_limpo):
-                    cpfs.add(cpf_limpo)
+                # CORREÇÃO: Usar a mesma lógica da função extrair_cpfs_kolmeya
+                if valor_str and valor_str != '0':  # CPF 0 é inválido
+                    # Limpar CPF
+                    cpf_limpo = limpar_cpf(valor_str)
+                    
+                    # Verificar se tem pelo menos 11 dígitos
+                    if cpf_limpo and len(cpf_limpo) == 11:
+                        # Tentar validar, mas aceitar mesmo se não passar na validação rigorosa
+                        if validar_cpf(cpf_limpo):
+                            cpfs.add(cpf_limpo)
+                            cpfs_validos += 1
+                            cpf_encontrado = True
+                            if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                                print(f"   ✅ CPF extraído da base (válido): {cpf_limpo} (coluna: {col})")
+                            break
+                        else:
+                            # CPF tem 11 dígitos mas não passa na validação - aceitar mesmo assim
+                            cpfs.add(cpf_limpo)
+                            cpfs_validos += 1
+                            cpf_encontrado = True
+                            if len(cpfs) <= 5:  # Mostrar apenas os primeiros 5 para debug
+                                print(f"   ⚠️ CPF extraído da base (aceito): {cpf_limpo} (coluna: {col}) (não passou na validação rigorosa)")
+                            break
+                    else:
+                        cpfs_invalidos += 1
+                        if cpfs_invalidos <= 3:  # Mostrar apenas os primeiros 3 para debug
+                            print(f"   ❌ CPF inválido da base (formato): {valor_str} -> {cpf_limpo} (coluna: {col})")
+        
+        if not cpf_encontrado:
+            registros_sem_cpf += 1
+            if registros_sem_cpf <= 3:  # Mostrar apenas os primeiros 3 para debug
+                print(f"   ⚠️ Registro sem CPF válido: linha {idx + 1}")
+    
+    print(f"🔍 DEBUG - Resumo da extração de CPFs da base:")
+    print(f"   📊 Total de registros processados: {len(df)}")
+    print(f"   ✅ CPFs válidos extraídos: {cpfs_validos}")
+    print(f"   ❌ CPFs inválidos encontrados: {cpfs_invalidos}")
+    print(f"   ⚠️ Registros sem CPF: {registros_sem_cpf}")
+    print(f"   📋 CPFs únicos finais: {len(cpfs)}")
+    
+    if cpfs:
+        print(f"   📋 Primeiros 5 CPFs da base: {list(cpfs)[:5]}")
+        if len(cpfs) > 5:
+            print(f"   📋 Últimos 5 CPFs da base: {list(cpfs)[-5:]}")
     
     return cpfs
 
@@ -4868,4 +4931,228 @@ if __name__ == "__main__":
         # Botão para tentar recarregar
         if st.button("🔄 Tentar Novamente"):
             st.rerun()
+
+def testar_comparacao_cpfs_kolmeya_base(uploaded_file, data_ini, data_fim, tenant_segment_id=None):
+    """
+    Função para testar especificamente a comparação de CPFs entre Kolmeya e base de dados.
+    
+    Args:
+        uploaded_file: Arquivo da base de dados
+        data_ini: Data inicial (date)
+        data_fim: Data final (date)
+        tenant_segment_id: Centro de custo do Kolmeya (opcional)
+    
+    Returns:
+        Dicionário com resultados da comparação
+    """
+    print(f"🧪 TESTE - Comparação CPFs Kolmeya vs Base de Dados")
+    print(f"   📅 Período: {data_ini} a {data_fim}")
+    print(f"   🏢 Centro de custo: {tenant_segment_id}")
+    
+    # 1. CARREGAR BASE DE DADOS
+    print(f"\n📊 Passo 1: Carregando base de dados...")
+    if uploaded_file is None:
+        print("❌ Nenhum arquivo de base de dados fornecido")
+        return {
+            "erro": "Nenhum arquivo de base de dados fornecido",
+            "cpfs_base": set(),
+            "cpfs_kolmeya": set(),
+            "cpfs_coincidentes": set(),
+            "total_base": 0,
+            "total_kolmeya": 0,
+            "total_coincidentes": 0
+        }
+    
+    try:
+        df_base = ler_base(uploaded_file)
+        print(f"✅ Base carregada: {df_base.shape[0]} registros, {df_base.shape[1]} colunas")
+        print(f"   📋 Colunas disponíveis: {list(df_base.columns)}")
+    except Exception as e:
+        print(f"❌ Erro ao carregar base: {e}")
+        return {
+            "erro": f"Erro ao carregar base: {e}",
+            "cpfs_base": set(),
+            "cpfs_kolmeya": set(),
+            "cpfs_coincidentes": set(),
+            "total_base": 0,
+            "total_kolmeya": 0,
+            "total_coincidentes": 0
+        }
+    
+    # 2. EXTRAIR CPFs DA BASE
+    print(f"\n🆔 Passo 2: Extraindo CPFs da base...")
+    cpfs_base = extrair_cpfs_da_base(df_base, data_ini, data_fim)
+    print(f"✅ CPFs da base extraídos: {len(cpfs_base)}")
+    
+    # 3. CONSULTAR CPFs DO KOLMEYA
+    print(f"\n📱 Passo 3: Consultando CPFs do Kolmeya...")
+    
+    # Obter token do Kolmeya
+    token_kolmeya = get_kolmeya_token()
+    if not token_kolmeya:
+        print("❌ Token do Kolmeya não encontrado")
+        return {
+            "erro": "Token do Kolmeya não encontrado",
+            "cpfs_base": cpfs_base,
+            "cpfs_kolmeya": set(),
+            "cpfs_coincidentes": set(),
+            "total_base": len(cpfs_base),
+            "total_kolmeya": 0,
+            "total_coincidentes": 0
+        }
+    
+    # Formatar datas para o formato esperado pela API
+    start_at = data_ini.strftime('%Y-%m-%d 00:00')
+    end_at = data_fim.strftime('%Y-%m-%d 23:59')
+    
+    cpfs_kolmeya = consultar_cpfs_diretamente_kolmeya(
+        start_at=start_at,
+        end_at=end_at,
+        limit=30000,
+        token=token_kolmeya,
+        tenant_segment_id=tenant_segment_id
+    )
+    
+    # Converter para set
+    cpfs_kolmeya_set = set(cpfs_kolmeya)
+    print(f"✅ CPFs do Kolmeya consultados: {len(cpfs_kolmeya_set)}")
+    
+    # 4. COMPARAR CPFs
+    print(f"\n🔍 Passo 4: Comparando CPFs...")
+    
+    # CPFs que estão em AMBOS os sistemas
+    cpfs_coincidentes = cpfs_base & cpfs_kolmeya_set
+    
+    # CPFs que estão APENAS na base
+    cpfs_apenas_base = cpfs_base - cpfs_kolmeya_set
+    
+    # CPFs que estão APENAS no Kolmeya
+    cpfs_apenas_kolmeya = cpfs_kolmeya_set - cpfs_base
+    
+    # 5. RESULTADOS
+    print(f"\n✅ Comparação concluída:")
+    print(f"   📊 Total CPFs Base: {len(cpfs_base)}")
+    print(f"   📊 Total CPFs Kolmeya: {len(cpfs_kolmeya_set)}")
+    print(f"   ✅ CPFs coincidentes: {len(cpfs_coincidentes)}")
+    print(f"   📋 CPFs apenas Base: {len(cpfs_apenas_base)}")
+    print(f"   📱 CPFs apenas Kolmeya: {len(cpfs_apenas_kolmeya)}")
+    
+    # Calcular percentuais
+    percentual_coincidentes_base = (len(cpfs_coincidentes) / len(cpfs_base) * 100) if cpfs_base else 0
+    percentual_coincidentes_kolmeya = (len(cpfs_coincidentes) / len(cpfs_kolmeya_set) * 100) if cpfs_kolmeya_set else 0
+    
+    print(f"   📈 % CPFs Base que estão no Kolmeya: {percentual_coincidentes_base:.1f}%")
+    print(f"   📈 % CPFs Kolmeya que estão na Base: {percentual_coincidentes_kolmeya:.1f}%")
+    
+    # Mostrar alguns exemplos de CPFs coincidentes
+    if cpfs_coincidentes:
+        print(f"   📋 Exemplos de CPFs coincidentes:")
+        for i, cpf in enumerate(list(cpfs_coincidentes)[:5]):
+            print(f"      {i+1}. {cpf}")
+        if len(cpfs_coincidentes) > 5:
+            print(f"      ... e mais {len(cpfs_coincidentes) - 5} CPFs")
+    
+    # Mostrar alguns exemplos de CPFs apenas na base
+    if cpfs_apenas_base:
+        print(f"   📋 Exemplos de CPFs apenas na Base:")
+        for i, cpf in enumerate(list(cpfs_apenas_base)[:3]):
+            print(f"      {i+1}. {cpf}")
+        if len(cpfs_apenas_base) > 3:
+            print(f"      ... e mais {len(cpfs_apenas_base) - 3} CPFs")
+    
+    # Mostrar alguns exemplos de CPFs apenas no Kolmeya
+    if cpfs_apenas_kolmeya:
+        print(f"   📱 Exemplos de CPFs apenas no Kolmeya:")
+        for i, cpf in enumerate(list(cpfs_apenas_kolmeya)[:3]):
+            print(f"      {i+1}. {cpf}")
+        if len(cpfs_apenas_kolmeya) > 3:
+            print(f"      ... e mais {len(cpfs_apenas_kolmeya) - 3} CPFs")
+    
+    return {
+        "cpfs_base": cpfs_base,
+        "cpfs_kolmeya": cpfs_kolmeya_set,
+        "cpfs_coincidentes": cpfs_coincidentes,
+        "cpfs_apenas_base": cpfs_apenas_base,
+        "cpfs_apenas_kolmeya": cpfs_apenas_kolmeya,
+        "total_base": len(cpfs_base),
+        "total_kolmeya": len(cpfs_kolmeya_set),
+        "total_coincidentes": len(cpfs_coincidentes),
+        "percentual_coincidentes_base": percentual_coincidentes_base,
+        "percentual_coincidentes_kolmeya": percentual_coincidentes_kolmeya
+    }
+
+def testar_limpeza_cpf(cpf_teste):
+    """
+    Função para testar a limpeza de um CPF específico.
+    
+    Args:
+        cpf_teste: CPF para testar (pode ser string, int, float, etc.)
+    
+    Returns:
+        CPF limpo e informações de debug
+    """
+    print(f"🧪 TESTE - Limpeza de CPF")
+    print(f"   📋 CPF de entrada: '{cpf_teste}' (tipo: {type(cpf_teste)})")
+    
+    # Testar limpeza
+    cpf_limpo = limpar_cpf(cpf_teste)
+    
+    print(f"   ✅ CPF limpo: '{cpf_limpo}'")
+    print(f"   📏 Comprimento: {len(cpf_limpo) if cpf_limpo else 0}")
+    
+    # Testar validação
+    if cpf_limpo:
+        eh_valido = validar_cpf(cpf_limpo)
+        print(f"   🔍 Validação: {'✅ Válido' if eh_valido else '❌ Inválido'}")
+    else:
+        print(f"   🔍 Validação: ❌ CPF vazio")
+    
+    return cpf_limpo
+
+def testar_cpfs_especificos():
+    """
+    Função para testar CPFs específicos que podem estar causando problemas.
+    """
+    print(f"🧪 TESTE - CPFs Específicos")
+    
+    # CPFs de teste baseados na imagem fornecida
+    cpfs_teste = [
+        "5245638029",      # 10 dígitos
+        "909418101",       # 9 dígitos  
+        "38878317802",     # 11 dígitos
+        "31655799894",     # 11 dígitos
+        "22079373803",     # 11 dígitos
+        "22315817870",     # 11 dígitos
+        "96838671034",     # 11 dígitos
+        "10345012674",     # 11 dígitos
+        "9818940466",      # 10 dígitos
+        "66570832387",     # 11 dígitos
+        "85801089691",     # 11 dígitos
+        # CPFs em notação científica (problema comum)
+        1.20225E+17,       # Notação científica
+        "1.20225E+17",     # String com notação científica
+        # CPFs com zeros à esquerda
+        "00012345678",     # Com zeros à esquerda
+        "12345678901",     # CPF válido
+        # CPFs inválidos
+        "00000000000",     # Todos iguais
+        "123",             # Muito curto
+        "",                # Vazio
+        None,              # None
+        0                  # Zero
+    ]
+    
+    resultados = {}
+    
+    for cpf in cpfs_teste:
+        print(f"\n--- Testando CPF: {cpf} ---")
+        cpf_limpo = testar_limpeza_cpf(cpf)
+        resultados[str(cpf)] = cpf_limpo
+    
+    print(f"\n📊 RESUMO DOS TESTES:")
+    for cpf_original, cpf_limpo in resultados.items():
+        status = "✅ Válido" if cpf_limpo and validar_cpf(cpf_limpo) else "❌ Inválido"
+        print(f"   '{cpf_original}' -> '{cpf_limpo}' ({status})")
+    
+    return resultados
 
