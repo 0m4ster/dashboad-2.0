@@ -3065,6 +3065,13 @@ def comparar_cpfs_facta_kolmeya(start_at, end_at, ambiente_facta="homologacao", 
 
 
 def main():
+    # Garantir que pandas está disponível
+    try:
+        import pandas as pd
+    except ImportError:
+        st.error("❌ Erro: pandas não está disponível. Instale com: pip install pandas")
+        return
+    
     # Configuração da página com layout otimizado
     st.set_page_config(
         page_title="Dashboard Servix",
@@ -4376,7 +4383,6 @@ def main():
                 if st.button("📥 Exportar CPFs", help="Exportar CPFs FGTS para CSV"):
                     if cpfs_fgts_todos:
                         # Criar DataFrame para exportação
-                        import pandas as pd
                         df_cpfs = pd.DataFrame({
                             'CPF': list(cpfs_fgts_todos),
                             'Status': 'FGTS',
