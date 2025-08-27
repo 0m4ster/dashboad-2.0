@@ -396,26 +396,21 @@ def obter_relatorio_sms_paginado(start_at: str, end_at: str, token: str, centro_
                                 temp_start = temp_end
                             
             except requests.exceptions.HTTPError as http_err:
-                if http_err.response.status_code == 422:
-                    st.warning(f"Erro 422 (Dados Inválidos) para o intervalo {current_interval_start.strftime('%Y-%m-%d %H:%M')} - {current_interval_end.strftime('%Y-%m-%d %H:%M')}. Pulando este intervalo.")
-                else:
-                    # Não exibir erro detalhado, apenas continuar
+                # Tratar erro 422 silenciosamente (dados inválidos para o intervalo)
+                if http_err.response.status_code != 422:
+                    # Apenas logar outros erros HTTP, mas continuar
                     continue
-            except requests.exceptions.RequestException as req_err:
-                # Não exibir erro detalhado, apenas continuar
+                # Para erro 422, apenas continuar sem mostrar mensagem
                 continue
-            except json.JSONDecodeError:
-                # Não exibir erro detalhado, apenas continuar
-                continue
-            except Exception as e:
-                # Não exibir erro detalhado, apenas continuar
+            except (requests.exceptions.RequestException, json.JSONDecodeError, Exception):
+                # Tratar todos os outros erros silenciosamente
                 continue
         
         progress_bar.empty()
         status_text.empty()
         
         if not todos_dados:
-            st.error("🔑 Token do Kolmeya não configurado ou inválido. Configure o token na seção de configurações.")
+            # Token inválido ou sem dados - retornar silenciosamente
             return None
         
         # Limpar e converter dados para DataFrame
@@ -1427,7 +1422,7 @@ def main():
             )
         
         if df_sms is None:
-            st.error("🔑 Token do Kolmeya não configurado ou inválido. Configure o token na seção de configurações.")
+            # Sem dados SMS disponíveis
             return
         elif df_sms is not None and not df_sms.empty:
             df_sms = normalizar_status(df_sms)
