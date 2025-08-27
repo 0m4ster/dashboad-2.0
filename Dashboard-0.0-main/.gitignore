@@ -1,0 +1,77 @@
+# Arquivos de ambiente
+.env
+.env.local
+.env.production
+.env.staging
+
+# Tokens e credenciais
+facta_token.txt
+facta_token_info.json
+facta_config.json
+*.token
+*.key
+*.pem
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Arquivos temporários
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Arquivos de dados sensíveis
+*.csv
+*.xlsx
+*.xls
+data/
+uploads/
+
+# Arquivos de configuração local
+config_local.py
+settings_local.py
