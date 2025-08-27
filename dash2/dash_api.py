@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import json
 from typing import Dict, List, Optional
@@ -11,7 +12,7 @@ from config import (
     KOLMEYA_API_ACCESSES_URL, 
     KOLMEYA_DEFAULT_TOKEN,
     FACTA_API_URLS, 
-    FACTA_DEFAULT_TOKEN # Manter para compatibilidade, mas não será usado para entrada manual
+    FACTA_DEFAULT_TOKEN
 )
 
 # Configuração da página
@@ -287,18 +288,21 @@ def testar_conexao_api(token: str) -> bool:
             "limit": 1
         }
         
-        # Simula uma resposta de sucesso para o teste de conexão
-        # response = requests.post(API_BASE_URL, headers=headers, json=payload, timeout=10)
-        # if response.status_code == 200:
-        #     return True
-        # else:
-        #     return False
-        return True # Sempre retorna True para simular conexão bem-sucedida
+        response = requests.post(API_BASE_URL, headers=headers, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return True
+        else:
+            # Não exibir erro detalhado, apenas retornar False
+            return False
             
     except requests.exceptions.RequestException as e:
+        # Não exibir erro detalhado, apenas retornar False
         return False
     except Exception as e:
+        # Não exibir erro detalhado, apenas retornar False
         return False
+
 
 
 @st.cache_data(ttl=300)  # Cache por 5 minutos
@@ -366,21 +370,10 @@ def obter_relatorio_sms_paginado(start_at: str, end_at: str, token: str, centro_
                 payload["centro_custo"] = centro_custo
             
             try:
-                # Simula uma resposta da API Kolmeya
-                # response = requests.post(API_BASE_URL, headers=headers, json=payload, timeout=30)
-                # response.raise_for_status() 
-                # data = response.json()
-
-                # Dados de exemplo para simulação
-                data = {
-                    'messages': [
-                        {'id': 1, 'status': 'DELIVERED', 'enviada_em': '01/01/2023 10:00', 'centro_custo': '8103', 'nome': 'Cliente A', 'telefone': '11987654321', 'lote': 1, 'job': 101},
-                        {'id': 2, 'status': 'SENT', 'enviada_em': '01/01/2023 10:05', 'centro_custo': '8103', 'nome': 'Cliente B', 'telefone': '11987654322', 'lote': 1, 'job': 101},
-                        {'id': 3, 'status': 'FAILED', 'enviada_em': '01/01/2023 10:10', 'centro_custo': '8104', 'nome': 'Cliente C', 'telefone': '11987654323', 'lote': 2, 'job': 102},
-                        {'id': 4, 'status': 'DELIVERED', 'enviada_em': '02/01/2023 11:00', 'centro_custo': '8103', 'nome': 'Cliente D', 'telefone': '11987654324', 'lote': 1, 'job': 101},
-                        {'id': 5, 'status': 'PENDING', 'enviada_em': '02/01/2023 11:05', 'centro_custo': '8104', 'nome': 'Cliente E', 'telefone': '11987654325', 'lote': 2, 'job': 102},
-                    ]
-                }
+                response = requests.post(API_BASE_URL, headers=headers, json=payload, timeout=30)
+                response.raise_for_status() 
+                
+                data = response.json()
                 
                 if 'messages' in data and data['messages']:
                     dados_obtidos_no_intervalo = data['messages']
@@ -491,69 +484,84 @@ def obter_acessos_encurtador(start_at: str, end_at: str, token: str, tenant_segm
         if ' ' in end_at:
             end_at = end_at.split(' ')[0]
         
-        payload = {
-            "start_at": start_at,
-            "end_at": end_at,
-            "limit": min(limit, 5000)  # Garantir que não exceda o limite da API
-        }
+        # IMPLEMENTAR PAGINAÇÃO AUTOMÁTICA para garantir todos os registros
+        all_accesses = []
+        total_accesses = 0
+        page = 1
+        max_pages = 50  
         
-        if tenant_segment_id is not None:
-            payload["tenant_segment_id"] = tenant_segment_id
-        
-        if is_robot is not None:
-            payload["is_robot"] = is_robot
-        
-        # response = requests.post(API_ACCESSES_URL, headers=headers, json=payload, timeout=30)
-        # response.raise_for_status()
-        # data = response.json()
-
-        # Dados de exemplo para simulação
-        data = {
-            'accesses': [
-                {'id': 1, 'accessed_at': '2023-01-01 10:00:00', 'job_id': 101, 'tenant_segment_id': 8103, 'fullphone': '11987654321', 'cpf': '12345678901', 'is_robot': '0', 'name': 'Cliente A'},
-                {'id': 2, 'accessed_at': '2023-01-01 10:05:00', 'job_id': 101, 'tenant_segment_id': 8103, 'fullphone': '11987654322', 'cpf': '12345678902', 'is_robot': '0', 'name': 'Cliente B'},
-                {'id': 3, 'accessed_at': '2023-01-01 10:10:00', 'job_id': 102, 'tenant_segment_id': 8104, 'fullphone': '11987654323', 'cpf': '12345678903', 'is_robot': '1', 'name': 'Robo C'},
-                {'id': 4, 'accessed_at': '2023-01-02 11:00:00', 'job_id': 101, 'tenant_segment_id': 8103, 'fullphone': '11987654324', 'cpf': '12345678904', 'is_robot': '0', 'name': 'Cliente D'},
-                {'id': 5, 'accessed_at': '2023-01-02 11:05:00', 'job_id': 102, 'tenant_segment_id': 8104, 'fullphone': '11987654325', 'cpf': '12345678905', 'is_robot': '0', 'name': 'Cliente E'},
-            ],
-            'totalAccesses': 5
-        }
-        
-        # A API pode retornar diferentes formatos
-        if isinstance(data, list):
-            # Verificar se é uma lista de objetos com 'accesses' e 'totalAccesses'
-            if data and isinstance(data[0], dict) and 'accesses' in data[0]:
-                all_accesses = []
-                total_accesses = 0
-                for i, item in enumerate(data):
-                    if isinstance(item, dict) and 'accesses' in item:
-                        if isinstance(item['accesses'], list):
-                            all_accesses.extend(item['accesses'])
-                        total_accesses += item.get('totalAccesses', 0)
-                accesses_list = all_accesses
+        while page <= max_pages:
+            payload = {
+                "start_at": start_at,
+                "end_at": end_at,
+                "limit": min(limit, 5000),  # Garantir que não exceda o limite da API
+                "page": page
+            }
+            
+            if tenant_segment_id is not None:
+                payload["tenant_segment_id"] = tenant_segment_id
+            
+            if is_robot is not None:
+                payload["is_robot"] = is_robot
+            
+            response = requests.post(API_ACCESSES_URL, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Processar resposta da API
+            current_accesses = []
+            current_total = 0
+            
+            if isinstance(data, list):
+                # Verificar se é uma lista de objetos com 'accesses' e 'totalAccesses'
+                if data and isinstance(data[0], dict) and 'accesses' in data[0]:
+                    for item in data:
+                        if isinstance(item, dict) and 'accesses' in item:
+                            if isinstance(item['accesses'], list):
+                                current_accesses.extend(item['accesses'])
+                            current_total += item.get('totalAccesses', 0)
+                else:
+                    # Formato: lista direta de acessos
+                    current_accesses = data
+                    current_total = len(data)
+            elif isinstance(data, dict) and 'accesses' in data:
+                # Formato: dicionário com 'accesses' e 'totalAccesses'
+                current_accesses = data['accesses']
+                current_total = data.get('totalAccesses', len(current_accesses))
             else:
-                # Formato: lista direta de acessos
-                accesses_list = data
-                total_accesses = len(data)
-        elif isinstance(data, dict) and 'accesses' in data:
-            # Formato: dicionário com 'accesses' e 'totalAccesses'
-            accesses_list = data['accesses']
-            total_accesses = data.get('totalAccesses', len(accesses_list))
-        else:
-            st.error(f"Formato de resposta da API não reconhecido: {type(data)}")
-            return None, 0
+                st.error(f"Formato de resposta da API não reconhecido na página {page}")
+                break
+            
+            # Adicionar acessos da página atual
+            if current_accesses:
+                all_accesses.extend(current_accesses)
+                total_accesses = max(total_accesses, current_total)
+                
+                # Se recebemos menos registros que o limite, provavelmente é a última página
+                if len(current_accesses) < limit:
+                    break
+            else:
+                # Página vazia, parar
+                break
+            
+            page += 1
+            
+            # Pequena pausa para não sobrecarregar a API
+            import time
+            time.sleep(0.1)
         
-        if not accesses_list:
+        if not all_accesses:
             st.warning("Nenhum acesso encontrado para o período selecionado.")
-            return None, 0 # Alterado para 0, pois total_accesses pode ser 0 se a lista estiver vazia
+            return None, total_accesses
         
         # Verificar se accesses é uma lista válida
-        if not isinstance(accesses_list, list):
-            st.error(f"Lista de acessos não é válida: {type(accesses_list)}")
-            return None, 0 # Alterado para 0
+        if not isinstance(all_accesses, list):
+            st.error(f"Lista de acessos não é válida: {type(all_accesses)}")
+            return None, total_accesses
         
         # Converter para DataFrame
-        df = pd.DataFrame(accesses_list)
+        df = pd.DataFrame(all_accesses)
         
         # Converter tipos de dados
         if 'accessed_at' in df.columns:
@@ -567,7 +575,7 @@ def obter_acessos_encurtador(start_at: str, end_at: str, token: str, tenant_segm
         if 'fullphone' in df.columns:
             df['fullphone'] = pd.to_numeric(df['fullphone'], errors='coerce')
         if 'cpf' in df.columns:
-            df['cpf'] = df['cpf'].astype(str).str.zfill(11) # Formatar CPF
+            df['cpf'] = pd.to_numeric(df['cpf'], errors='coerce')
         if 'is_robot' in df.columns:
             df['is_robot'] = df['is_robot'].astype(str)
         
@@ -592,27 +600,33 @@ def obter_acessos_encurtador(start_at: str, end_at: str, token: str, tenant_segm
             # Remover duplicatas baseadas nos campos únicos
             df = df.drop_duplicates(subset=campos_unicos, keep='first')
             
-            duplicatas_removidas = df_antes - len(df) # Corrigido para usar len(df) após a remoção
+            df_depois = len(df)
+            duplicatas_removidas = df_antes - df_depois
             
         return df, total_accesses
         
     except requests.exceptions.HTTPError as http_err:
+        # Não exibir erros detalhados, apenas retornar None
         return None, 0
     except requests.exceptions.RequestException as req_err:
+        # Não exibir erros detalhados, apenas retornar None
         return None, 0
     except json.JSONDecodeError:
+        # Não exibir erros detalhados, apenas retornar None
         return None, 0
     except Exception as e:
+        # Não exibir erros detalhados, apenas retornar None
         return None, 0
 
-@st.cache_data(ttl=300)  # Cache por 5 minutos
-def obter_propostas_facta(token: str, ambiente: str = 'producao', **kwargs) -> Optional[pd.DataFrame]:
+# @st.cache_data(ttl=300)  # Cache por 5 minutos
+def obter_propostas_facta(token: str, ambiente: str = 'producao', cpfs_validos: Optional[list] = None, **kwargs) -> Optional[pd.DataFrame]:
     """
     Obtém o andamento de propostas da API FACTA.
     
     Args:
         token: Token de autorização Bearer
         ambiente: 'homologacao' ou 'producao'
+        cpfs_validos: Lista de CPFs válidos para filtrar resultados (apenas clientes do endpoint de acessos)
         **kwargs: Parâmetros opcionais da API:
             - convenio: int (ex: 3)
             - averbador: int (código do averbador)
@@ -628,9 +642,11 @@ def obter_propostas_facta(token: str, ambiente: str = 'producao', **kwargs) -> O
             - codigo_sub: int
     
     Returns:
-        DataFrame com as propostas ou None se houver erro.
+        DataFrame com as propostas filtradas apenas para CPFs válidos ou None se houver erro.
     """
     try:
+
+        
         if ambiente not in FACTA_API_URLS:
             st.error("Ambiente inválido. Use 'homologacao' ou 'producao'.")
             return None
@@ -683,20 +699,10 @@ def obter_propostas_facta(token: str, ambiente: str = 'producao', **kwargs) -> O
                 except:
                     pass
         
-        # response = requests.get(url, headers=headers, params=params, timeout=30)
-        # response.raise_for_status()
-        # data = response.json()
-
-        # Dados de exemplo para simulação
-        data = {
-            'propostas': [
-                {'id': 1, 'status_proposta': 'EFETIVADO', 'data_movimento': '01/01/2023', 'cliente': 'Cliente A', 'cpf': '12345678901', 'valor_bruto': 10000.00, 'valor_af': 500.00, 'convenio': 3},
-                {'id': 2, 'status_proposta': 'PENDENTE', 'data_movimento': '01/01/2023', 'cliente': 'Cliente B', 'cpf': '12345678902', 'valor_bruto': 5000.00, 'valor_af': 250.00, 'convenio': 3},
-                {'id': 3, 'status_proposta': 'APROVADO', 'data_movimento': '02/01/2023', 'cliente': 'Cliente C', 'cpf': '12345678903', 'valor_bruto': 15000.00, 'valor_af': 750.00, 'convenio': 4},
-                {'id': 4, 'status_proposta': 'RECUSADO', 'data_movimento': '02/01/2023', 'cliente': 'Cliente D', 'cpf': '12345678904', 'valor_bruto': 2000.00, 'valor_af': 100.00, 'convenio': 3},
-            ],
-            'erro': False
-        }
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
         
         if data.get('erro', False):
             st.error(f"Erro na API FACTA: {data.get('mensagem', 'Erro desconhecido')}")
@@ -731,7 +737,49 @@ def obter_propostas_facta(token: str, ambiente: str = 'producao', **kwargs) -> O
         if 'cpf' in df.columns:
             df['cpf'] = df['cpf'].astype(str).str.zfill(11)
         
-        return df
+        # FILTRAGEM OBRIGATÓRIA: Aplicar filtro de CPFs válidos se fornecido
+        if cpfs_validos and 'cpf' in df.columns:
+            # Normalizar CPFs do Kolmeya para comparação
+            cpfs_kolmeya_norm = [str(cpf).zfill(11) for cpf in cpfs_validos]
+            
+            # Normalizar CPFs da FACTA
+            df['cpf_norm'] = df['cpf'].astype(str).str.zfill(11)
+            
+            # APLICAR FILTRO: Manter apenas propostas com CPFs que existem nos acessos do Kolmeya
+            df_filtrado = df[df['cpf_norm'].isin(cpfs_kolmeya_norm)]
+            
+            # Remover coluna temporária
+            df_filtrado = df_filtrado.drop('cpf_norm', axis=1)
+            
+            # Calcular estatísticas do filtro
+            total_antes = len(df)
+            total_depois = len(df_filtrado)
+            cpfs_unicos_depois = df_filtrado['cpf'].nunique()
+            
+            # Filtro aplicado com sucesso (sem interface adicional)
+            
+            # Validação do filtro
+            if total_depois == 0:
+                st.warning(f"⚠️ Nenhuma proposta encontrada para os {len(cpfs_validos):,} CPFs dos acessos")
+                return None
+            
+            # Validação silenciosa dos CPFs retornados
+            cpfs_retornados = set(df_filtrado['cpf'].unique())
+            cpfs_validos_set = set(cpfs_kolmeya_norm)
+            
+            cpfs_invalidos = cpfs_retornados - cpfs_validos_set
+            if cpfs_invalidos:
+                st.error(f"❌ ERRO: {len(cpfs_invalidos)} CPFs retornados não estão na lista de CPFs válidos")
+                return None
+            
+            return df_filtrado
+            
+        elif cpfs_validos:
+            st.error(f"❌ ERRO: CPFs válidos fornecidos ({len(cpfs_validos)}), mas coluna 'cpf' não encontrada no DataFrame")
+            return None
+        else:
+            st.error(f"❌ ERRO: Nenhum filtro de CPFs aplicado")
+            return None
         
     except requests.exceptions.HTTPError as http_err:
         if http_err.response.status_code == 401:
@@ -1155,6 +1203,10 @@ def criar_grafico_barras_status(df: pd.DataFrame) -> go.Figure:
     
     return fig
 
+
+
+
+
 def main():
     # Navegação entre páginas
     st.sidebar.markdown("## 📱 Navegação")
@@ -1205,15 +1257,12 @@ def main():
         
         st.markdown("---")
         
-        # Removendo o campo de entrada de token manual
-        # token = st.text_input(
-        #     "🔑 Token de Autorização",
-        #     value=DEFAULT_TOKEN,
-        #     type="password",
-        #     help="Token Bearer para autenticação na API."
-        # )
-        token = DEFAULT_TOKEN # Usar o token padrão do config.py
-        st.info(f"🔑 Token de Autorização (Kolmeya): {'Configurado' if token else 'Não Configurado'}")
+        token = st.text_input(
+            "🔑 Token de Autorização",
+            value=DEFAULT_TOKEN,
+            type="password",
+            help="Token Bearer para autenticação na API."
+        )
         
         st.markdown("---")
         st.subheader("📅 Período de Consulta")
@@ -1257,11 +1306,11 @@ def main():
         )
         
         limit_accesses = st.number_input(
-            "📊 Limite de Registros",
-            min_value=1,
+            "📊 Limite de Registros por Página",
+            min_value=1000,
             max_value=5000,
             value=5000,
-            help="Máximo de registros a buscar (máximo 5000)"
+            help="Registros por página (recomendado: 5000 para buscar todos os dados)"
         )
         
         acessos_unicos = st.checkbox(
@@ -1269,6 +1318,8 @@ def main():
             value=True,
             help="Remove duplicatas baseadas em telefone, CPF e centro de custo"
         )
+        
+                        # Sistema configurado para extrair CPFs dos SMS
         
         st.markdown("---")
         
@@ -1281,15 +1332,13 @@ def main():
             token_facta = token_facta_auto
             st.success("✅ Usando token FACTA gerenciado automaticamente")
         else:
-            # Removendo o campo de entrada de token manual
-            # token_facta = st.text_input(
-            #     "🔑 Token FACTA (Manual)",
-            #     value=FACTA_DEFAULT_TOKEN if FACTA_DEFAULT_TOKEN else "",
-            #     type="password",
-            #     help="Token Bearer para autenticação na API FACTA (use o gerenciador para tokens automáticos)"
-            # )
-            token_facta = FACTA_DEFAULT_TOKEN # Usar o token padrão do config.py
-            st.warning("⚠️ Token gerenciado não disponível. Use a página 'Gerenciador de Tokens Facta' para gerar novos tokens")
+            token_facta = st.text_input(
+                "🔑 Token FACTA (Manual)",
+                value=FACTA_DEFAULT_TOKEN if FACTA_DEFAULT_TOKEN else "",
+                type="password",
+                help="Token Bearer para autenticação na API FACTA (use o gerenciador para tokens automáticos)"
+            )
+            st.warning("⚠️ Token gerenciado não disponível. Use a página 'Gerenciador de Tokens Facta'")
         
         st.markdown("---")
         st.subheader("📁 Importar Dados Locais")
@@ -1317,18 +1366,14 @@ def main():
         # Botões organizados verticalmente
         if st.button("🧪 Testar Conexão", type="secondary", use_container_width=True):
             with st.spinner("Testando conexão..."):
-                # Usar o token padrão para o teste de conexão Kolmeya
-                if testar_conexao_api(DEFAULT_TOKEN):
-                    st.success("✅ Conexão com API Kolmeya bem-sucedida (simulada)!")
-                else:
-                    st.error("❌ Falha na conexão com API Kolmeya (simulada)!")
+                testar_conexao_api(token)
         
         if st.button("🔍 Buscar Dados SMS, Acessos e FACTA", type="primary", use_container_width=True):
             st.session_state.buscar_dados = True
             st.session_state.centro_custo_filtro = centro_custo_input
             st.session_state.start_date_api = start_at_date
             st.session_state.end_date_api = end_at_date
-            st.session_state.token_api = token # Usar o token padrão
+            st.session_state.token_api = token
             
             # Configurações para acessos de encurtador
             st.session_state.buscar_acessos = True
@@ -1338,12 +1383,12 @@ def main():
             st.session_state.acessos_unicos = acessos_unicos
             st.session_state.start_date_accesses = start_at_date
             st.session_state.end_date_accesses = end_at_date
-            st.session_state.token_accesses = token # Usar o token padrão
+            st.session_state.token_accesses = token
             
             # Configurações para API FACTA (usando valores padrão)
             st.session_state.buscar_propostas_facta = True
             st.session_state.ambiente_facta = 'producao'
-            st.session_state.token_facta = token_facta # Usar o token gerenciado automaticamente
+            st.session_state.token_facta = token_facta
             st.session_state.convenio_facta = 3
             st.session_state.averbador_facta = None
             st.session_state.af_facta = None
@@ -1776,7 +1821,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">🏢 Centros de Custo</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_access3:
                 if 'is_robot' in df_acessos.columns:
@@ -1793,7 +1838,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">🤖 Acessos de Robôs</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_access4:
                 st.markdown("""
@@ -1821,7 +1866,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">📅 Acessos Hoje</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_access6:
                 if 'accessed_at' in df_acessos.columns:
@@ -1838,7 +1883,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">📅 Acessos Ontem</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_access7:
                 if 'job_id' in df_acessos.columns:
@@ -1855,7 +1900,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">📋 Jobs Únicos</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_access8:
                 if 'fullphone' in df_acessos.columns:
@@ -1872,7 +1917,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">📱 Telefones Únicos</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             # Filtros para acessos
             st.markdown("---")
@@ -1941,77 +1986,80 @@ def main():
                     mime="text/csv"
                 )
 
-            # Seção: CPFs extraídos de forma separada
-            st.markdown("---")
-            st.markdown("""
-            <div style="background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin: 20px 0;">
-                <h4 style="color: #2c3e50; margin-bottom: 15px;">🧾 CPFs extraídos dos acessos (únicos)</h4>
-            </div>
-            """, unsafe_allow_html=True)
+            # Extração de CPFs dos SMS (funcionando em background)
 
-            if 'cpf' in df_acessos_filtered.columns and df_acessos_filtered['cpf'].notna().any():
-                # Formatar CPFs como strings com 11 dígitos e remover duplicatas
-                cpfs_series = (
-                    df_acessos_filtered['cpf']
-                        .dropna()
-                        .astype(float)
-                        .astype(int)
-                        .astype(str)
-                        .str.zfill(11)
-                )
-                df_cpfs = pd.DataFrame({'cpf': cpfs_series.drop_duplicates().sort_values().reset_index(drop=True)})
-
-                st.markdown(f"Quantidade de CPFs únicos: {len(df_cpfs):,}")
-                st.dataframe(df_cpfs, use_container_width=True, hide_index=True)
-
-                # Download apenas de CPFs
-                csv_cpfs = df_cpfs.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download CSV - CPFs",
-                    data=csv_cpfs,
-                    file_name=f"cpfs_acessos_{start_at_accesses}_{end_at_accesses}.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("Nenhum CPF disponível nos acessos filtrados.")
+            # Extrair CPFs dos SMS (que já funcionam)
+            if 'df_sms' in st.session_state and st.session_state.df_sms is not None:
+                df_sms = st.session_state.df_sms
                 
-                # Botão para consultar CPFs dos acessos na FACTA
-                st.markdown("---")
-                st.markdown("""
-                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
-                    <h4 style="color: #2c3e50; margin-bottom: 15px;">🔍 Consultar CPFs dos Acessos na FACTA</h4>
-                    <p style="color: #7f8c8d; margin-bottom: 15px;">
-                        Use os CPFs dos acessos de encurtador para buscar propostas correspondentes na API FACTA.
-                    </p>
-                </div>
-                """.format(), unsafe_allow_html=True)
-                
-                if st.button("🏦 Consultar CPFs dos Acessos na FACTA", type="primary", use_container_width=True):
-                    st.session_state.consultar_cpfs_acessos_facta = True
-                    # Extrair CPFs únicos dos acessos
-                    if 'cpf' in df_acessos_filtered.columns and df_acessos_filtered['cpf'].notna().any():
-                        cpfs_acessos = (
-                            df_acessos_filtered['cpf']
-                                .dropna()
-                                .astype(str)
-                                .str.zfill(11)
-                                .drop_duplicates()
-                                .tolist()
+                # Verificar se há coluna de CPF nos SMS
+                if 'cpf' in df_sms.columns and df_sms['cpf'].notna().any():
+                    # Formatar CPFs dos SMS como strings com 11 dígitos e remover duplicatas
+                    cpfs_sms = (
+                        df_sms['cpf']
+                            .dropna()
+                            .astype(str)
+                            .str.replace(r'[^\d]', '', regex=True)  # Remover caracteres não numéricos
+                            .str.zfill(11)
+                    )
+                    
+                    # Filtrar apenas CPFs válidos (11 dígitos)
+                    cpfs_sms = cpfs_sms[cpfs_sms.str.len() == 11]
+                    
+                    if len(cpfs_sms) > 0:
+                        df_cpfs_sms = pd.DataFrame({'cpf': cpfs_sms.drop_duplicates().sort_values().reset_index(drop=True)})
+                        
+                        st.markdown(f"**📊 CPFs extraídos dos SMS:** {len(df_cpfs_sms):,} CPFs únicos")
+                        st.dataframe(df_cpfs_sms.head(20), use_container_width=True, hide_index=True)
+                        
+                        # Download dos CPFs dos SMS
+                        csv_cpfs_sms = df_cpfs_sms.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download CSV - CPFs dos SMS",
+                            data=csv_cpfs_sms,
+                            file_name=f"cpfs_sms_{start_at_accesses}_{end_at_accesses}.csv",
+                            mime="text/csv"
                         )
-                        st.session_state.cpfs_para_consultar = cpfs_acessos
-                        st.success(f"✅ {len(cpfs_acessos):,} CPFs únicos extraídos dos acessos para consulta na FACTA")
-                    else:
-                        st.error("❌ Nenhum CPF disponível nos acessos para consulta")
+                        
+                        # Configurar automaticamente os CPFs dos SMS para consulta FACTA
+                        cpfs_sms_list = df_cpfs_sms['cpf'].tolist()
+                        st.session_state.cpfs_para_consultar = cpfs_sms_list
+                        # CPFs configurados automaticamente para FACTA (sem interface)
+                        
+                        # Verificar se há colunas de CPF (sem mostrar na interface)
+                        cpf_columns = [col for col in df_sms.columns if 'cpf' in col.lower() or 'documento' in col.lower()]
+                        
+                        if not cpf_columns:
+                            st.error("❌ Nenhuma coluna de CPF encontrada nos SMS")
+                            
+                else:
+                    st.warning("⚠️ Coluna 'cpf' não encontrada nos SMS")
+                    # Verificação silenciosa da estrutura dos dados SMS
+                    
+                    # Mostrar colunas disponíveis nos SMS (apenas se houver erro)
+                    if not any(word in col.lower() for word in ['cpf', 'documento', 'identidade', 'rg'] for col in df_sms.columns):
+                        st.error("❌ Nenhuma coluna de identificação encontrada nos SMS")
+                        
+            else:
+                st.error("❌ Dados SMS não disponíveis. Execute primeiro a busca de SMS.")
+                st.warning("⚠️ Sem dados SMS, não é possível extrair CPFs para filtrar a FACTA")
     
-    # Seção de propostas da FACTA (executada automaticamente com SMS)
-    if 'buscar_propostas_facta' in st.session_state and st.session_state.buscar_propostas_facta:
-        # Converter datas para formato DD/MM/AAAA
-        data_ini_str = st.session_state.data_ini_facta.strftime('%d/%m/%Y')
-        data_fim_str = st.session_state.data_fim_facta.strftime('%d/%m/%Y')
-        data_alteracao_ini_str = st.session_state.data_alteracao_ini_facta.strftime('%d/%m/%Y')
-        data_alteracao_fim_str = st.session_state.data_alteracao_fim_facta.strftime('%d/%m/%Y')
+            # CPFs configurados automaticamente para FACTA (sem interface adicional)
+        
+        # Seção de propostas da FACTA (executada automaticamente com SMS)
+        if 'buscar_propostas_facta' in st.session_state and st.session_state.buscar_propostas_facta:
+            # Converter datas para formato DD/MM/AAAA
+            data_ini_str = st.session_state.data_ini_facta.strftime('%d/%m/%Y')
+            data_fim_str = st.session_state.data_fim_facta.strftime('%d/%m/%Y')
+            data_alteracao_ini_str = st.session_state.data_alteracao_ini_facta.strftime('%d/%m/%Y')
+            data_alteracao_fim_str = st.session_state.data_alteracao_fim_facta.strftime('%d/%m/%Y')
         
         with st.spinner("Buscando propostas da FACTA..."):
+            # Verificar se há CPFs válidos dos acessos para filtrar
+            cpfs_validos = None
+            if 'cpfs_para_consultar' in st.session_state and st.session_state.cpfs_para_consultar:
+                cpfs_validos = st.session_state.cpfs_para_consultar
+            
             df_propostas = obter_propostas_facta(
                 token=st.session_state.token_facta,
                 ambiente=st.session_state.ambiente_facta,
@@ -2025,7 +2073,9 @@ def main():
                 pagina=st.session_state.pagina_facta,
                 quantidade=st.session_state.quantidade_facta,
                 consulta_sub=st.session_state.consulta_sub_facta,
-                codigo_sub=st.session_state.codigo_sub_facta
+                codigo_sub=st.session_state.codigo_sub_facta,
+                # Passar CPFs válidos para filtragem
+                cpfs_validos=cpfs_validos
             )
         
         if df_propostas is not None and not df_propostas.empty:
@@ -2036,10 +2086,12 @@ def main():
             <div style="background-color: #ffffff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 20px 0;">
                 <h3 style="color: #2c3e50; text-align: center; margin-bottom: 25px;">🏦 Propostas FACTA (Executado Automaticamente)</h3>
             </div>
-            """.format(), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
             
             # Métricas das propostas em grid organizado
             col_prop1, col_prop2, col_prop3, col_prop4, col_prop5 = st.columns(5)
+            
+            # Filtro de CPFs ativo (sem interface adicional)
             
             with col_prop1:
                 st.markdown("""
@@ -2064,7 +2116,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">💰 Valor Total</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_prop3:
                 if 'status_proposta' in df_propostas.columns:
@@ -2081,7 +2133,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">📋 Status Únicos</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_prop4:
                 if 'valor_af' in df_propostas.columns:
@@ -2098,7 +2150,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">💰 Valor AF Total</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             with col_prop5:
                 if 'cpf' in df_propostas.columns:
@@ -2115,7 +2167,7 @@ def main():
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">👥 CPFs Únicos</h5>
                         <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">N/A</p>
                     </div>
-                    """.format(), unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
             
             # Filtros para propostas
             st.markdown("---")
@@ -2123,7 +2175,7 @@ def main():
             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
                 <h4 style="color: #2c3e50; margin-bottom: 15px;">🔍 Filtros para Propostas</h4>
             </div>
-            """.format(), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
             
             col_prop_filter1, col_prop_filter2, col_prop_filter3 = st.columns(3)
             
@@ -2227,7 +2279,7 @@ def main():
                 <div style="background-color: #e8f5e9; padding: 20px; border-radius: 10px; border-left: 4px solid #4caf50; margin: 20px 0;">
                     <h4 style="color: #2c3e50; margin-bottom: 15px;">💰 Resumo Financeiro - Contratos Pagos</h4>
                 </div>
-                """.format(), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
                 
                 col_pagos1, col_pagos2, col_pagos3, col_pagos4 = st.columns(4)
                 
@@ -2236,7 +2288,7 @@ def main():
                     st.markdown("""
                     <div style="text-align: center; padding: 15px; background-color: #4caf50; border-radius: 8px; color: white;">
                         <h5 style="margin: 0 0 5px 0;">💰 Valor Total Pago</h5>
-                        <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">R$ {}</p>
+                        <p style="font-size: 20px; font-weight: bold; margin: 0;">R$ {}</p>
                     </div>
                     """.format(f"{valor_total_pagos:,.2f}"), unsafe_allow_html=True)
                 
@@ -2244,8 +2296,8 @@ def main():
                     valor_af_total_pagos = df_propostas_filtered['valor_af'].sum() if 'valor_af' in df_propostas_filtered.columns else 0
                     st.markdown("""
                     <div style="text-align: center; padding: 15px; background-color: #2196f3; border-radius: 8px; color: white;">
-                        <h5 style="color: #2c3e50; margin: 0 0 5px 0;">🏦 Valor AF Total Pago</h5>
-                        <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">R$ {}</p>
+                        <h5 style="margin: 0 0 5px 0;">🏦 Valor AF Total Pago</h5>
+                        <p style="font-size: 20px; font-weight: bold; margin: 0;">R$ {}</p>
                     </div>
                     """.format(f"{valor_af_total_pagos:,.2f}"), unsafe_allow_html=True)
                 
@@ -2254,7 +2306,7 @@ def main():
                     st.markdown("""
                     <div style="text-align: center; padding: 15px; background-color: #ff9800; border-radius: 8px; color: white;">
                         <h5 style="margin: 0 0 5px 0;">📊 Valor Médio Pago</h5>
-                        <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">R$ {}</p>
+                        <p style="font-size: 20px; font-weight: bold; margin: 0;">R$ {}</p>
                     </div>
                     """.format(f"{valor_medio_pago:,.2f}"), unsafe_allow_html=True)
                 
@@ -2263,7 +2315,7 @@ def main():
                     st.markdown("""
                     <div style="text-align: center; padding: 15px; background-color: #9c27b0; border-radius: 8px; color: white;">
                         <h5 style="margin: 0 0 5px 0;">📋 Total Contratos Pagos</h5>
-                        <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">{}</p>
+                        <p style="font-size: 20px; font-weight: bold; margin: 0;">{}</p>
                     </div>
                     """.format(f"{total_contratos_pagos:,}"), unsafe_allow_html=True)
                 
@@ -2286,6 +2338,8 @@ def main():
                         st.markdown("**📊 Distribuição por Status**")
                         st.dataframe(status_dist.reset_index().rename(columns={'index': 'Status', 'status_proposta': 'Quantidade'}), use_container_width=True, hide_index=True)
             
+            # Filtro de CPFs ativo (sem interface adicional)
+            
             # Download dos dados
             if not df_propostas_filtered.empty:
                 csv_propostas = df_propostas_filtered.to_csv(index=False)
@@ -2302,7 +2356,7 @@ def main():
                 <div style="background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin: 20px 0;">
                     <h4 style="color: #2c3e50; margin-bottom: 15px;">🧾 CPFs extraídos das propostas (únicos)</h4>
                 </div>
-                """.format(), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
                 if 'cpf' in df_propostas_filtered.columns and df_propostas_filtered['cpf'].notna().any():
                     # Formatar CPFs como strings com 11 dígitos e remover duplicatas
@@ -2337,7 +2391,7 @@ def main():
         <div style="background-color: #ffffff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 20px 0;">
             <h3 style="color: #2c3e50; text-align: center; margin-bottom: 25px;">🔍 Consulta FACTA por CPFs dos Acessos (Executado Automaticamente)</h3>
         </div>
-        """.format(), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         
         if 'cpfs_para_consultar' in st.session_state and st.session_state.cpfs_para_consultar:
             cpfs_para_consultar = st.session_state.cpfs_para_consultar
@@ -2364,7 +2418,9 @@ def main():
                             convenio=st.session_state.get('convenio_facta', 3) if st.session_state.get('convenio_facta', 3) > 0 else None,
                             quantidade=st.session_state.get('quantidade_facta', 100),
                             # Filtrar por CPF específico
-                            cpf=cpf
+                            cpf=cpf,
+                            # Passar lista de CPFs válidos para filtragem
+                            cpfs_validos=st.session_state.cpfs_para_consultar
                         )
                         
                         if df_proposta_cpf is not None and not df_proposta_cpf.empty:
@@ -2421,6 +2477,45 @@ def main():
                     # Tabela de resultados
                     st.dataframe(df_propostas_combinadas, use_container_width=True, hide_index=True)
                     
+                    # Seção de análise da filtragem
+                    if 'cpfs_para_consultar' in st.session_state and st.session_state.cpfs_para_consultar:
+                        st.markdown("---")
+                        st.markdown("""
+                        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                            <h4 style="color: #2c3e50; margin-bottom: 15px;">📊 Análise da Filtragem por CPFs dos Acessos</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Métricas de filtragem
+                        col_filtro1, col_filtro2, col_filtro3 = st.columns(3)
+                        
+                        with col_filtro1:
+                            cpfs_acessos = len(st.session_state.cpfs_para_consultar)
+                            st.metric("CPFs dos Acessos", f"{cpfs_acessos:,}")
+                        
+                        with col_filtro2:
+                            cpfs_encontrados = df_propostas_combinadas['cpf'].nunique()
+                            st.metric("CPFs Encontrados na Facta", f"{cpfs_encontrados:,}")
+                        
+                        with col_filtro3:
+                            taxa_cobertura = (cpfs_encontrados / cpfs_acessos * 100) if cpfs_acessos > 0 else 0
+                            st.metric("Taxa de Cobertura", f"{taxa_cobertura:.1f}%")
+                        
+                        # Gráfico de comparação
+                        if cpfs_acessos > 0:
+                            st.markdown("**📈 Comparação: CPFs dos Acessos vs. CPFs Encontrados na Facta**")
+                            
+                            # Criar dados para o gráfico
+                            labels = ['CPFs Encontrados', 'CPFs Não Encontrados']
+                            sizes = [cpfs_encontrados, cpfs_acessos - cpfs_encontrados]
+                            colors = ['#4caf50', '#f44336']
+                            
+                            # Gráfico de pizza simples
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+                            ax.axis('equal')
+                            st.pyplot(fig)
+                    
                     # Seção destacada para Valor AF Total
                     if 'valor_af' in df_propostas_combinadas.columns:
                         st.markdown("---")
@@ -2428,7 +2523,7 @@ def main():
                         <div style="background-color: #e8f5e9; padding: 20px; border-radius: 10px; border-left: 4px solid #4caf50; margin: 20px 0;">
                             <h4 style="color: #2c3e50; margin-bottom: 15px;">💰 Resumo Financeiro - Valor AF</h4>
                         </div>
-                        """.format(), unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
                         
                         col_af1, col_af2, col_af3 = st.columns(3)
                         
@@ -2530,7 +2625,7 @@ def main():
         <div style="background-color: #ffffff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 20px 0;">
             <h3 style="color: #2c3e50; text-align: center; margin-bottom: 25px;">📊 Dados Importados do Excel (Análise Local)</h3>
         </div>
-        """.format(), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         
         df_excel = st.session_state.df_excel
         
@@ -2564,7 +2659,7 @@ def main():
         <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
             <h4 style="color: #2c3e50; margin-bottom: 15px;">🔍 Filtros para Dados do Excel</h4>
         </div>
-        """.format(), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         
         col_excel_filter1, col_excel_filter2 = st.columns(2)
         
@@ -2641,8 +2736,7 @@ def main():
                 </div>
             </div>
         </div>
-        """.format(), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-

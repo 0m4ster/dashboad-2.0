@@ -6,7 +6,7 @@ load_dotenv()
 # Configurações da API Kolmeya
 KOLMEYA_API_BASE_URL = os.getenv('KOLMEYA_API_BASE_URL', 'https://kolmeya.com.br/api/v1/sms/reports/statuses')
 KOLMEYA_API_ACCESSES_URL = os.getenv('KOLMEYA_API_ACCESSES_URL', 'https://kolmeya.com.br/api/v1/sms/accesses')
-KOLMEYA_DEFAULT_TOKEN = os.getenv('KOLMEYA_DEFAULT_TOKEN', '')
+KOLMEYA_DEFAULT_TOKEN = os.getenv('KOLMEYA_DEFAULT_TOKEN', 'VnzIZWlJOKaJhHlAJOIF7kByDIQ2T1cpmy0fQTDM')
 
 # Configurações da API FACTA
 FACTA_API_URLS = {
@@ -15,9 +15,7 @@ FACTA_API_URLS = {
 }
 FACTA_DEFAULT_TOKEN = os.getenv('FACTA_DEFAULT_TOKEN', '')
 
-# Removendo credenciais FACTA e a função get_facta_users()
-# FACTA_USUARIO = os.getenv('FACTA_USUARIO', '')
-# FACTA_SENHA = os.getenv('FACTA_SENHA', '')
+
 
 def get_facta_users():
     """Retorna lista de usuários FACTA configurados (agora vazia, pois não há credenciais)"""

@@ -11,21 +11,36 @@ import os
 class FactaTokenManager:
     def __init__(self):
         self.token_file = "facta_token.txt"
-        self.config_file = "facta_config.json" # Manter para consistência, mas não será usado para credenciais
+        self.config_file = "facta_config.json"
         self.load_config()
     
     def load_config(self):
-        """Carrega configurações salvas (agora não mais credenciais)"""
-        # Não há mais credenciais para carregar
-        self.usuario = ""
-        self.senha = ""
-        self.available_users = []
-        print("DEBUG: Credenciais FACTA não são mais necessárias para geração de token.")
+        """Carrega configurações salvas incluindo credenciais FACTA"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    self.usuario = config.get('usuario', '')
+                    self.senha = config.get('senha', '')
+                    self.ambiente = config.get('ambiente', 'producao')
+            else:
+                self.usuario = ""
+                self.senha = ""
+                self.ambiente = "producao"
+        except:
+            self.usuario = ""
+            self.senha = ""
+            self.ambiente = "producao"
     
     def save_config(self):
-        """Salva configurações (não mais credenciais)"""
-        # Não há mais credenciais para salvar
-        pass
+        """Salva configurações incluindo credenciais FACTA"""
+        config = {
+            'usuario': self.usuario,
+            'senha': self.senha,
+            'ambiente': self.ambiente
+        }
+        with open(self.config_file, 'w') as f:
+            json.dump(config, f)
     
     def switch_user(self, user_name):
         """Alterna para um usuário específico (não mais aplicável)"""
@@ -36,29 +51,79 @@ class FactaTokenManager:
         return []
     
     def generate_token(self):
-        """Gera um token fictício para simulação"""
+        """Gera um token real chamando o endpoint da FACTA usando Basic Auth"""
         try:
-            # Simula a geração de um token válido
-            simulated_token = "SIMULATED_FACTA_TOKEN_" + datetime.now().strftime("%Y%m%d%H%M%S")
+            # Verifica se tem credenciais
+            if not self.usuario or not self.senha:
+                return False, None, "Credenciais FACTA não configuradas. Configure usuário e senha primeiro."
             
-            # Salva o token
-            with open(self.token_file, "w") as f:
-                f.write(simulated_token)
+            # Seleciona ambiente (homologação ou produção)
+            if self.ambiente == 'homologacao':
+                url = "https://webservice-homol.facta.com.br/gera-token"
+            else:
+                url = "https://webservice.facta.com.br/gera-token"
             
-            # Salva informações do token (validade de 15 minutos)
-            token_info = {
-                'token': simulated_token,
-                'timestamp': datetime.now().isoformat(),
-                'expires_at': (datetime.now() + timedelta(minutes=15)).isoformat()
+            # Codifica credenciais em base64 conforme documentação FACTA
+            credentials = f"{self.usuario}:{self.senha}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+            
+            # Headers conforme documentação FACTA
+            headers = {
+                'Accept': 'application/json',
+                'Authorization': f'Basic {encoded_credentials}',
+                'User-Agent': 'Servix-Dashboard/1.0'
             }
             
-            with open("facta_token_info.json", "w") as f:
-                json.dump(token_info, f)
+            # Faz a requisição para o endpoint da FACTA
+            response = requests.get(url, headers=headers, timeout=30)
             
-            return True, simulated_token, None
+            if response.status_code == 200:
+                data = response.json()
                 
+                if not data.get('erro'):
+                    # Token gerado com sucesso
+                    token = data.get('token')
+                    expira = data.get('expira', '')
+                    
+                    if token:
+                        # Salva o token
+                        with open(self.token_file, "w") as f:
+                            f.write(token)
+                        
+                        # Calcula expiração (1 hora conforme documentação)
+                        expires_at = datetime.now() + timedelta(hours=1)
+                        
+                        # Salva informações do token
+                        token_info = {
+                            'token': token,
+                            'timestamp': datetime.now().isoformat(),
+                            'expires_at': expires_at.isoformat(),
+                            'source': 'FACTA_API',
+                            'ambiente': self.ambiente,
+                            'expira_api': expira,
+                            'auth_method': 'Basic Auth (FACTA)'
+                        }
+                        
+                        with open("facta_token_info.json", "w") as f:
+                            json.dump(token_info, f)
+                        
+                        return True, token, f"Token gerado com sucesso para ambiente {self.ambiente}"
+                    else:
+                        return False, None, "Token não encontrado na resposta da API"
+                else:
+                    # Erro da API FACTA
+                    error_msg = data.get('mensagem', 'Erro desconhecido')
+                    return False, None, f"Erro da API FACTA: {error_msg}"
+            
+            elif response.status_code == 401:
+                return False, None, "Credenciais inválidas. Verifique usuário e senha."
+            else:
+                return False, None, f"Erro HTTP {response.status_code}: {response.text}"
+                
+        except requests.exceptions.RequestException as e:
+            return False, None, f"Erro de conexão: {str(e)}"
         except Exception as e:
-            return False, None, str(e)
+            return False, None, f"Erro inesperado: {str(e)}"
     
     def get_current_token(self):
         """Obtém token atual"""
@@ -82,7 +147,7 @@ class FactaTokenManager:
         return None
     
     def is_token_expired(self):
-        """Verifica se o token expirou"""
+        """Verifica se o token expirou (validade de 1 hora conforme FACTA)"""
         token_info = self.get_token_info()
         if token_info and 'expires_at' in token_info:
             try:
@@ -109,7 +174,7 @@ def render_facta_token_page():
     
     manager = st.session_state.facta_manager
     
-    # Sidebar para configurações (removendo campos de usuário/senha)
+    # Sidebar para configurações
     with st.sidebar:
         st.markdown("""
         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
@@ -117,17 +182,44 @@ def render_facta_token_page():
         </div>
         """, unsafe_allow_html=True)
         
-        # Removendo campos de usuário e senha
-        # new_usuario = st.text_input("👤 Usuário:", value=manager.usuario, key="facta_usuario")
-        # new_senha = st.text_input("🔑 Senha:", value=manager.senha, type="password", key="facta_senha")
+        # Configuração de credenciais
+        st.subheader("🔐 Credenciais FACTA")
         
-        # Removendo botão de salvar configurações, pois não há mais credenciais para salvar
-        # if st.button("💾 Salvar Configurações", type="primary", use_container_width=True):
-        #     manager.usuario = new_usuario
-        #     manager.senha = new_senha
-        #     manager.save_config()
-        #     st.success("✅ Configurações salvas com sucesso!")
-        #     st.rerun()
+        # Campo de usuário
+        novo_usuario = st.text_input(
+            "👤 Usuário FACTA",
+            value=manager.usuario,
+            type="default",
+            help="Usuário para acesso à API FACTA"
+        )
+        
+        # Campo de senha
+        nova_senha = st.text_input(
+            "🔒 Senha FACTA",
+            value=manager.senha,
+            type="password",
+            help="Senha para acesso à API FACTA"
+        )
+        
+        # Seleção de ambiente
+        novo_ambiente = st.selectbox(
+            "🌍 Ambiente",
+            options=["producao", "homologacao"],
+            index=0 if manager.ambiente == "producao" else 1,
+            help="Ambiente da API FACTA (produção ou homologação)"
+        )
+        
+        # Botão para salvar configurações
+        if st.button("💾 Salvar Configurações", type="secondary", use_container_width=True):
+            if novo_usuario and nova_senha:
+                manager.usuario = novo_usuario
+                manager.senha = nova_senha
+                manager.ambiente = novo_ambiente
+                manager.save_config()
+                st.success("✅ Configurações salvas com sucesso!")
+                st.rerun()
+            else:
+                st.error("❌ Usuário e senha são obrigatórios!")
         
         st.markdown("---")
         st.markdown("""
@@ -214,13 +306,15 @@ def render_facta_token_page():
                 expires_time = datetime.fromisoformat(token_info['expires_at'])
                 time_left = expires_time - datetime.now()
                 if time_left.total_seconds() > 0:
-                    minutes_left = int(time_left.total_seconds() / 60)
+                    hours_left = int(time_left.total_seconds() / 3600)
+                    minutes_left = int((time_left.total_seconds() % 3600) / 60)
+                    time_display = f"{hours_left}h {minutes_left}m" if hours_left > 0 else f"{minutes_left}m"
                     st.markdown("""
                     <div style="text-align: center; padding: 15px; background-color: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
                         <h5 style="color: #2c3e50; margin: 0 0 5px 0;">Expira em</h5>
-                        <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">{} min</p>
+                        <p style="font-size: 20px; font-weight: bold; color: #2c3e50; margin: 0;">{}</p>
                     </div>
-                    """.format(minutes_left), unsafe_allow_html=True)
+                    """.format(time_display), unsafe_allow_html=True)
                 else:
                     st.markdown("""
                     <div style="text-align: center; padding: 15px; background-color: #ffebee; border-radius: 8px; border-left: 4px solid #f44336;">
@@ -241,7 +335,7 @@ def render_facta_token_page():
             expires_time = datetime.fromisoformat(token_info['expires_at'])
             time_left = expires_time - datetime.now()
             if time_left.total_seconds() > 0:
-                progress = 1 - (time_left.total_seconds() / (15 * 60))  # 15 minutos
+                progress = 1 - (time_left.total_seconds() / (60 * 60))  # 1 hora
                 st.progress(progress, text=f"⏰ Tempo restante: {int(time_left.total_seconds() / 60)} min {int(time_left.total_seconds() % 60)}s")
         
         # Token atual
@@ -266,24 +360,51 @@ def render_facta_token_page():
             else:
                 st.warning("⚠️ Nenhum token encontrado!")
         
-        # Botão para testar conexão (agora sem credenciais, apenas com o token)
+        # Botão para testar conexão com a API FACTA real
         if st.button("🧪 Testar Conexão", type="secondary", use_container_width=True):
-            if current_token:
-                try:
-                    headers = {
-                        'Accept': 'application/json',
-                        'Authorization': f'Bearer {current_token}',
-                        'Content-Type': 'application/json'
-                    }
+            if not manager.usuario or not manager.senha:
+                st.error("❌ Configure usuário e senha FACTA primeiro!")
+                return
+                
+            try:
+                # Seleciona ambiente
+                if manager.ambiente == 'homologacao':
+                    url = "https://webservice-homol.facta.com.br/gera-token"
+                else:
+                    url = "https://webservice.facta.com.br/gera-token"
+                
+                st.info(f"🔍 Testando conexão com API FACTA ({manager.ambiente})...")
+                
+                # Codifica credenciais em base64
+                credentials = f"{manager.usuario}:{manager.senha}"
+                encoded_credentials = base64.b64encode(credentials.encode()).decode()
+                
+                # Headers conforme documentação FACTA
+                headers = {
+                    'Accept': 'application/json',
+                    'Authorization': f'Basic {encoded_credentials}',
+                    'User-Agent': 'Servix-Dashboard/1.0'
+                }
+                
+                with st.spinner("Testando autenticação..."):
+                    response = requests.get(url, headers=headers, timeout=30)
                     
-                    # Teste simples com a API FACTA (pode ser um endpoint público ou um que aceite o token)
-                    # Para este exemplo, vamos simular uma resposta de sucesso
-                    st.success("✅ Conexão com API FACTA simulada com sucesso!")
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('erro'):
+                            st.warning(f"⚠️ API acessível, mas com erro: {data.get('mensagem', 'Erro desconhecido')}")
+                        else:
+                            st.success("✅ Conexão com API FACTA estabelecida com sucesso!")
+                            st.info(f"Token válido: {data.get('token', 'N/A')[:20]}...")
+                    elif response.status_code == 401:
+                        st.error("❌ Credenciais inválidas. Verifique usuário e senha.")
+                    else:
+                        st.error(f"❌ Erro HTTP {response.status_code}: {response.text}")
                         
-                except Exception as e:
-                    st.error(f"❌ Erro ao testar conexão: {str(e)}")
-            else:
-                st.warning("⚠️ Nenhum token disponível para teste")
+            except requests.exceptions.RequestException as e:
+                st.error(f"❌ Erro de conexão: {str(e)}")
+            except Exception as e:
+                st.error(f"❌ Erro inesperado: {str(e)}")
     
     # Seção de logs
     st.markdown("---")
@@ -322,18 +443,35 @@ def render_facta_token_page():
     # Seção de informações técnicas
     with st.expander("🔧 Informações Técnicas"):
         st.markdown("""
-        **Endpoint:** `https://webservice.facta.com.br/gera-token` (Simulado)
+        **Endpoint:** `https://webservice.facta.com.br/gera-token` ✅ **IMPLEMENTADO**
         
-        **Método:** GET (Simulado)
+        **Método:** GET
         
-        **Autenticação:** Não requer credenciais (Simulado)
+        **Autenticação:** Basic Auth com `usuario:senha` em base64 ✅
         
-        **Validade do Token:** 15 minutos (Simulado)
+        **Ambientes:**
+        - Produção: `https://webservice.facta.com.br/gera-token`
+        - Homologação: `https://webservice-homol.facta.com.br/gera-token`
+        
+        **Validade do Token:** 1 hora (conforme documentação FACTA) ✅
+        
+        **Implementação:**
+        - Credenciais configuráveis na sidebar
+        - Codificação automática em base64
+        - Seleção de ambiente (produção/homologação)
+        - Validação automática de expiração
         
         **Arquivos gerados:**
         - `facta_token.txt` - Token atual
         - `facta_token_info.json` - Metadados do token
-        - `facta_config.json` - Configurações salvas (não mais para credenciais)
+        - `facta_config.json` - Configurações e credenciais
+        
+        **🔑 Como usar:**
+        1. Configure usuário e senha na sidebar
+        2. Selecione o ambiente (produção/homologação)
+        3. Clique em "Salvar Configurações"
+        4. Use "Testar Conexão" para validar credenciais
+        5. Use "Gerar Novo Token" para obter token válido
         """)
         
         # Mostra arquivos existentes
